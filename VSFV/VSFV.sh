@@ -4,10 +4,10 @@
 # Viral small-RNA feature vector (VSFV) analysis
 # A method of ViralScout methodology
 # It uses variable-dimensional feature vectors counted from uniquely mapped sRNAs of each contig
-# Feature dimensions: 13 (size), 17 (size + 5' nt), 26 (size × strand), 52 (size × 5' nt), 104 (size × 5' nt × strand)
+# Feature modes: size (length only), size_P_5nt (length + 5' nt), sizeXstr (length × strand), sizeX5nt (length × 5' nt), sizeX5ntXstr (length × 5' nt × strand)
 # Users can define any their pre-assembled contigs as viral benchmarks by providing names
 # Other contigs were compared with the benchmarks to find virus-like contigs
-# The comparison is based on pairwise Spearman correlation coefficients of feature vectors
+# The comparison is based on pairwise correlation coefficients of feature vectors (Spearman or Pearson)
 # Please put all needed files in current directory
 # ==================================================================================================
 
@@ -99,20 +99,21 @@ usage() {
     echo ""
     echo "sRNA_vfv.py options:"
     echo "  --sRNAvfv-cores INT      Cores for sRNA_vfv.py (default: same as samtools-threads)"
-    echo "  -d, --dimension INT      Feature vector dimension: 13/17/26/52/104 (default: 52)"
-    echo "                           13: length only (18-30nt)"
-    echo "                           17: length + total 5' nucleotides"
-	echo "                           26: length × strands"
-    echo "                           52: length × 5' nucleotides"
-    echo "                           104: length × 5' nucleotides × strands"
+    echo "  -m, --mode STR           Feature vector mode: size/size_P_5nt/sizeXstr/sizeX5nt/sizeX5ntXstr (default: sizeX5nt)"
+    echo "                           size: length only"
+    echo "                           size_P_5nt: length + 5' nucleotides" 
+    echo "                           sizeXstr: length × strands"
+    echo "                           sizeX5nt: length × 5' nucleotides"
+    echo "                           sizeX5ntXstr: length × 5' nucleotides × strands"
     echo ""
-    echo "spearman_vfv.py options:"
+    echo "Correlation analysis options:"
+    echo "  --pearson                Use Pearson correlation instead of Spearman (default: Spearman)"
     echo "  -n, --number_21_nt INT   21nt threshold (default: 10)"
     echo "  --specific-contigs INT   Top K highly correlated contigs for each benchmark (default: 1000)"
     echo "  --common-contigs INT     Final number of common top L contigs (default: 999)"
     echo "  --mean-rs FLOAT          Composite score threshold (default: 0.8)"
     echo "  --p-value FLOAT          P-value threshold (default: 0.05)"
-    echo "  --spearman-cores INT     Cores for spearman_vfv.py (default: same as samtools-threads)"
+    echo "  --correlation-cores INT  Cores for correlation analysis (default: same as samtools-threads)"
     echo "  --cell-height FLOAT      Heatmap cell height (default: 0.1)"
     echo "  --cell-width FLOAT       Heatmap cell width (default: 0.1)"
     echo "  --no-plot                Do not generate heatmap"
@@ -135,6 +136,7 @@ MIN_LENGTH=18
 MAX_LENGTH=30
 KEEP_NON_UNIQUE=false
 FORCE_RERUN=false
+USE_PEARSON=false
 
 # unisRNA.py parameters
 UNISRNA_CORES="$SAMTOOLS_THREADS"
@@ -142,14 +144,14 @@ UNISRNA_CORES="$SAMTOOLS_THREADS"
 # sRNA_vfv.py parameters  
 SRNAVFV_CORES="$SAMTOOLS_THREADS"
 
-# spearman_vfv.py parameters
+# correlation analysis parameters
 NUMBER_21_NT=10
 SPECIFIC_CONTIGS=1000
 COMMON_CONTIGS=999
 MEAN_RS=0.8
 P_VALUE=0.05
-VECTOR_D=52
-SPEARMAN_CORES="$SAMTOOLS_THREADS"
+VECTOR_MODE="sizeX5nt"
+CORRELATION_CORES="$SAMTOOLS_THREADS"
 CELL_HEIGHT=0.1
 CELL_WIDTH=0.1
 NO_PLOT=false
@@ -181,15 +183,16 @@ while [[ $# -gt 0 ]]; do
         
         # sRNA_vfv.py options
         --sRNAvfv-cores) SRNAVFV_CORES="$2"; shift 2 ;;
-        -d|--dimension) VECTOR_D="$2"; shift 2 ;;
+        -m|--mode) VECTOR_MODE="$2"; shift 2 ;;
         
-        # spearman_vfv.py options
+        # Correlation analysis options
+        --pearson) USE_PEARSON=true; shift ;;
         -n|--number_21_nt) NUMBER_21_NT="$2"; shift 2 ;;
         --specific-contigs) SPECIFIC_CONTIGS="$2"; shift 2 ;;
         --common-contigs) COMMON_CONTIGS="$2"; shift 2 ;;
         --mean-rs) MEAN_RS="$2"; shift 2 ;;
         --p-value) P_VALUE="$2"; shift 2 ;;
-        --spearman-cores) SPEARMAN_CORES="$2"; shift 2 ;;
+        --correlation-cores) CORRELATION_CORES="$2"; shift 2 ;;
         --cell-height) CELL_HEIGHT="$2"; shift 2 ;;
         --cell-width) CELL_WIDTH="$2"; shift 2 ;;
         --no-plot) NO_PLOT=true; shift ;;
@@ -212,9 +215,9 @@ if [[ "$SRNAVFV_CORES" == "$SAMTOOLS_THREADS" ]]; then
     SRNAVFV_CORES="$SAMTOOLS_THREADS"
 fi
 
-# If spearman cores not explicitly set, use samtools threads
-if [[ "$SPEARMAN_CORES" == "$SAMTOOLS_THREADS" ]]; then
-    SPEARMAN_CORES="$SAMTOOLS_THREADS"
+# If correlation cores not explicitly set, use samtools threads
+if [[ "$CORRELATION_CORES" == "$SAMTOOLS_THREADS" ]]; then
+    CORRELATION_CORES="$SAMTOOLS_THREADS"
 fi
 
 # ---------- Check required inputs ----------
@@ -226,8 +229,8 @@ fi
 
 # ---------- Validate parameters ----------
 # Validate dimension parameter
-if [[ ! "$VECTOR_D" =~ ^(13|17|26|52|104)$ ]]; then
-    log_error "Invalid dimension: $VECTOR_D. Must be 13, 17, 26, 52, or 104"
+if [[ ! "$VECTOR_MODE" =~ ^(size|size_P_5nt|sizeXstr|sizeX5nt|sizeX5ntXstr)$ ]]; then
+    log_error "Invalid mode: $VECTOR_MODE. Must be size, size_P_5nt, sizeXstr, sizeX5nt, or sizeX5ntXstr"
     exit 1
 fi
 
@@ -239,6 +242,17 @@ fi
 if [[ $COMMON_CONTIGS -lt 2 ]]; then
     log_error "common-contigs ($COMMON_CONTIGS) must be at least 2"
     exit 1
+fi
+
+# ---------- Set correlation method and script ----------
+if [[ "$USE_PEARSON" = true ]]; then
+    CORRELATION_METHOD="pearson"
+    CORRELATION_SCRIPT="pearson_vfv.py"
+    CORRELATION_DESCRIPTION="Pearson correlation"
+else
+    CORRELATION_METHOD="spearman"
+    CORRELATION_SCRIPT="spearman_vfv.py"
+    CORRELATION_DESCRIPTION="Spearman correlation"
 fi
 
 # ---------- Extract base names for file prefixes ----------
@@ -255,7 +269,8 @@ log_info "Logging started. All messages will be saved to: $LOG_FILE"
 log_info "Sample prefix: $SAMPLE_PREFIX"
 log_info "Reads basename: $READS_BASENAME"
 log_info "Reference basename: $FASTA_BASENAME"
-log_info "Feature vector dimension: ${VECTOR_D}-dimensional"
+log_info "Feature vector mode: $VECTOR_MODE"
+log_info "Correlation method: $CORRELATION_DESCRIPTION"
 log_info "Keep non-unique reads: $KEEP_NON_UNIQUE"
 
 # ---------- Check all required files exist in current directory ----------
@@ -280,7 +295,14 @@ check_file "$FASTA_FILE" "Reference fasta"
 check_file "$READS_FILE" "sRNA reads"
 check_file "unisRNA.py" "Python script"
 check_file "sRNA_vfv.py" "Python script" 
-check_file "spearman_vfv.py" "Python script"
+
+# Check correlation script based on method
+if [[ ! -f "$CORRELATION_SCRIPT" ]]; then
+    log_error "Required correlation script not found: $CORRELATION_SCRIPT"
+    log_error "Please ensure the script exists in the current directory"
+    exit 1
+fi
+check_file "$CORRELATION_SCRIPT" "Correlation script"
 
 # ---------- Setup output ----------
 LOG_FILE="${OUTPUT_DIR}/${SAMPLE_PREFIX}_pipeline_$(date '+%Y%m%d_%H%M%S').log"
@@ -293,7 +315,8 @@ log_info "Sequencing data: ../$READS_FILE"
 log_info "Benchmark file: ${BENCHMARK_FILE:+../$BENCHMARK_FILE}"
 log_info "Output directory: $OUTPUT_DIR"
 log_info "Sample prefix: $SAMPLE_PREFIX"
-log_info "Feature vector dimension: ${VECTOR_D}-dimensional"
+log_info "Feature vector mode: $VECTOR_MODE"
+log_info "Correlation method: $CORRELATION_DESCRIPTION"
 log_info "Thread configuration: Total=$TOTAL_THREADS, bowtie2=$BOWTIE2_THREADS, samtools=$SAMTOOLS_THREADS"
 log_info "Sort memory: $SORT_MEMORY"
 log_info "sRNA length range: ${MIN_LENGTH}-${MAX_LENGTH} nt"
@@ -311,8 +334,8 @@ else
     FINAL_BAM_INDEX="${FINAL_BAM}.bai"
 fi
 
-FEATURE_CSV="${SAMPLE_PREFIX}_${VECTOR_D}d_features.csv"
-SPEARMAN_PREFIX="${SAMPLE_PREFIX}_spearman_${VECTOR_D}d"
+FEATURE_CSV="${SAMPLE_PREFIX}_${VECTOR_MODE}_features.csv"
+CORRELATION_PREFIX="${SAMPLE_PREFIX}_${CORRELATION_METHOD}_${VECTOR_MODE}"
 
 # ---------- Check if we can resume from indexed BAM ----------
 if [[ "$FORCE_RERUN" = false ]] && check_file "$FINAL_BAM" "Indexed BAM" && check_file "$FINAL_BAM_INDEX" "BAM index"; then
@@ -378,17 +401,17 @@ if [[ "$SKIP_TO_DOWNSTREAM" = false ]]; then
 fi
 
 # ---------- Step 5: Generate feature vectors ----------
-log_step "Step 5: Generating ${VECTOR_D}-dimensional feature vectors"
+log_step "Step 5: Generating ${VECTOR_MODE} feature vectors"
 # Check if feature CSV already exists and we're not forcing rerun
 if [[ "$FORCE_RERUN" = false ]] && check_file "$FEATURE_CSV" "Feature CSV file"; then
     log_success "Feature CSV file already exists, skipping generation"
 else
-    run_command "python3 '../sRNA_vfv.py' -i '$FINAL_BAM' -o '$FEATURE_CSV' -c $SRNAVFV_CORES --min_length $MIN_LENGTH --max_length $MAX_LENGTH -d $VECTOR_D" "Generate ${VECTOR_D}-dimensional feature vectors"
+    run_command "python3 '../sRNA_vfv.py' -i '$FINAL_BAM' -o '$FEATURE_CSV' -c $SRNAVFV_CORES --min_length $MIN_LENGTH --max_length $MAX_LENGTH -m $VECTOR_MODE" "Generate ${VECTOR_MODE} feature vectors"
     check_file "$FEATURE_CSV" "Feature CSV file"
 fi
 
-# ---------- Step 6: Spearman correlation clustering ----------
-log_step "Step 6: Spearman correlation clustering analysis"
+# ---------- Step 6: Correlation clustering analysis ----------
+log_step "Step 6: ${CORRELATION_DESCRIPTION} clustering analysis"
 
 # ---------- Enhanced benchmark file handling ----------
 if [[ -n "$BENCHMARK_FILE" ]]; then
@@ -414,7 +437,7 @@ else
     # No benchmark file provided - use dimension-specific vsiRNA simulant reference
     # Check for dimension-specific reference file in multiple locations
     VSI_REF_FILE=""
-    DIMENSION_SPECIFIC_FILE="vsiRNA_simulant_${VECTOR_D}.csv"
+    DIMENSION_SPECIFIC_FILE="vsiRNA_simulant_${VECTOR_MODE}.csv"
     
     # Find specific simulant files
     if [[ -f "../$DIMENSION_SPECIFIC_FILE" ]]; then
@@ -433,7 +456,7 @@ else
     
     # Create intermediate feature file by appending vsiRNA simulant data (skip header)
     log_info "Creating intermediate feature file by appending vsiRNA simulant data..."
-    INTERMEDIATE_FEATURE_CSV="${SAMPLE_PREFIX}_${VECTOR_D}d_features_with_vsiRNA_simulant.csv"
+    INTERMEDIATE_FEATURE_CSV="${SAMPLE_PREFIX}_${VECTOR_MODE}_features_with_vsiRNA_simulant.csv"
     
     # Check if vsiRNA simulant file exists and has content
     if [[ ! -f "$VSI_REF_FILE" ]]; then
@@ -454,52 +477,53 @@ else
     
     log_info "Appended vsiRNA simulant data to feature file (skipped header)"
     
-    # Use the intermediate file for spearman analysis
+    # Use the intermediate file for correlation analysis
     FINAL_FEATURE_CSV="$INTERMEDIATE_FEATURE_CSV"
     BENCHMARK_ARG=""  # No need for -b argument since vsiRNA simulant contigs are now in the feature file
     
     log_info "Using intermediate feature file with vsiRNA simulant contigs: $FINAL_FEATURE_CSV"
 fi
 
-# Build spearman arguments (spearman_vfv.py auto detects dimension)
-SPEARMAN_ARGS="-i '$FINAL_FEATURE_CSV' $BENCHMARK_ARG -t $SPEARMAN_CORES -n $NUMBER_21_NT"
-SPEARMAN_ARGS="$SPEARMAN_ARGS -s $SPECIFIC_CONTIGS -c $COMMON_CONTIGS -m $MEAN_RS -p $P_VALUE"
-SPEARMAN_ARGS="$SPEARMAN_ARGS --cell_height $CELL_HEIGHT --cell_width $CELL_WIDTH"
+# Build correlation arguments (script auto detects dimension)
+CORRELATION_ARGS="-i '$FINAL_FEATURE_CSV' $BENCHMARK_ARG -t $CORRELATION_CORES -n $NUMBER_21_NT"
+CORRELATION_ARGS="$CORRELATION_ARGS -s $SPECIFIC_CONTIGS -c $COMMON_CONTIGS -m $MEAN_RS -p $P_VALUE"
+CORRELATION_ARGS="$CORRELATION_ARGS --cell_height $CELL_HEIGHT --cell_width $CELL_WIDTH"
+CORRELATION_ARGS="$CORRELATION_ARGS --min_length $MIN_LENGTH --max_length $MAX_LENGTH"
 if [[ "$NO_PLOT" = true ]]; then
-    SPEARMAN_ARGS="$SPEARMAN_ARGS --no_plot"
+    CORRELATION_ARGS="$CORRELATION_ARGS --no_plot"
 fi
-SPEARMAN_ARGS="$SPEARMAN_ARGS -o '$SPEARMAN_PREFIX'"
+CORRELATION_ARGS="$CORRELATION_ARGS -o '$CORRELATION_PREFIX'"
 
 # Define FILTERED_CONTIGS_FILE
-FILTERED_CONTIGS_FILE="${SPEARMAN_PREFIX}_filtered_contigs.csv"
+FILTERED_CONTIGS_FILE="${CORRELATION_PREFIX}_filtered_contigs.csv"
 
 # Check if clustering results already exist
-CLUSTERING_FILES_EXIST=$(ls ${SAMPLE_PREFIX}_spearman_${VECTOR_D}d_* 2>/dev/null | wc -l)
+CLUSTERING_FILES_EXIST=$(ls ${SAMPLE_PREFIX}_${CORRELATION_METHOD}_${VECTOR_MODE}_* 2>/dev/null | wc -l)
 if [[ "$FORCE_RERUN" = false ]] && [[ $CLUSTERING_FILES_EXIST -gt 0 ]]; then
     log_success "Clustering results already exist, skipping clustering analysis"
     echo "Existing clustering files:"
-    ls -lh ${SAMPLE_PREFIX}_spearman_${VECTOR_D}d_* 2>/dev/null | while read -r line; do echo "  $line"; done
+    ls -lh ${SAMPLE_PREFIX}_${CORRELATION_METHOD}_${VECTOR_MODE}_* 2>/dev/null | while read -r line; do echo "  $line"; done
     
     # Always check filtered_contigs.csv
     if [[ ! -f "$FILTERED_CONTIGS_FILE" ]]; then
         log_warning "Filtered contigs file not found: $FILTERED_CONTIGS_FILE"
         # Find any filtered_contigs file
-        ALTERNATIVE_FILTERED=$(ls ${SAMPLE_PREFIX}_spearman_${VECTOR_D}d_filtered_contigs.csv 2>/dev/null | head -1)
+        ALTERNATIVE_FILTERED=$(ls ${SAMPLE_PREFIX}_${CORRELATION_METHOD}_${VECTOR_MODE}_filtered_contigs.csv 2>/dev/null | head -1)
         if [[ -n "$ALTERNATIVE_FILTERED" ]]; then
             FILTERED_CONTIGS_FILE="$ALTERNATIVE_FILTERED"
             log_info "Using alternative filtered contigs file: $FILTERED_CONTIGS_FILE"
         fi
     fi
 else
-    run_command "python3 '../spearman_vfv.py' $SPEARMAN_ARGS" "Spearman correlation clustering"
+    run_command "python3 '../$CORRELATION_SCRIPT' $CORRELATION_ARGS" "${CORRELATION_DESCRIPTION} correlation clustering"
 fi
 
 # ---------- Step 7: Enhanced contig feature analysis ----------
 log_step "Step 7: Enhanced contig feature analysis"
 
 # Define expected output files
-ENHANCED_CONTIGS_FILE="${SPEARMAN_PREFIX}_enhanced_contigs.csv"
-ENHANCED_SEQUENCES_FILE="${SPEARMAN_PREFIX}_enhanced_contigs_sequences.fasta"
+ENHANCED_CONTIGS_FILE="${CORRELATION_PREFIX}_enhanced_contigs.csv"
+ENHANCED_SEQUENCES_FILE="${CORRELATION_PREFIX}_enhanced_contigs_sequences.fasta"
 
 # Check if contig_feature.py exists and filtered contigs file exists
 if [[ -f "../contig_feature.py" ]] && [[ -f "$FILTERED_CONTIGS_FILE" ]]; then
@@ -539,7 +563,7 @@ if [[ -f "../contig_feature.py" ]] && [[ -f "$FILTERED_CONTIGS_FILE" ]]; then
     
     # Add to keep files (whether newly generated or already existed)
     KEEP_FILES+=("$ENHANCED_CONTIGS_FILE")
-    KEEP_FILES+=("${SPEARMAN_PREFIX}_enhanced_contigs_summary.txt")
+    KEEP_FILES+=("${CORRELATION_PREFIX}_enhanced_contigs_summary.txt")
     KEEP_FILES+=("$ENHANCED_SEQUENCES_FILE")
     
     # Also keep benchmarks feature file if it was generated
@@ -566,16 +590,16 @@ KEEP_FILES=(
     "$FINAL_BAM"
     "$FINAL_BAM_INDEX"
     "$FEATURE_CSV"
-    "${SPEARMAN_PREFIX}_spearman_clustering_heatmap.svg"
+    "${CORRELATION_PREFIX}_${CORRELATION_METHOD}_clustering_heatmap.svg"
     "$FILTERED_CONTIGS_FILE"
     "${SAMPLE_PREFIX}_pipeline_parameters.txt"
-    "${SPEARMAN_PREFIX}_spearman_distance_matrix.csv"
-    "${SPEARMAN_PREFIX}_analysis_summary.txt"
-    "${SPEARMAN_PREFIX}_clustering_order.csv"
-    "${SPEARMAN_PREFIX}_enhanced_contigs.csv"
-    "${SPEARMAN_PREFIX}_enhanced_contigs_summary.txt"
+    "${CORRELATION_PREFIX}_${CORRELATION_METHOD}_distance_matrix.csv"
+    "${CORRELATION_PREFIX}_analysis_summary.txt"
+    "${CORRELATION_PREFIX}_clustering_order.csv"
+    "${CORRELATION_PREFIX}_enhanced_contigs.csv"
+    "${CORRELATION_PREFIX}_enhanced_contigs_summary.txt"
     "${BENCHMARK_FILE}_feature.csv"
-    "${SPEARMAN_PREFIX}_enhanced_contigs_sequences.fasta"
+    "${CORRELATION_PREFIX}_enhanced_contigs_sequences.fasta"
 )
 
 # Also keep the intermediate feature file if it was created
@@ -595,8 +619,8 @@ for file in "${KEEP_FILES[@]}"; do
     fi
 done
 
-# Remove files that match spearman or sample prefix but aren't in our keep list
-find . -maxdepth 1 -type f \( -name "${SPEARMAN_PREFIX}_*" -o -name "${SAMPLE_PREFIX}_*" \) | while read -r file; do
+# Remove files that match correlation or sample prefix but aren't in our keep list
+find . -maxdepth 1 -type f \( -name "${CORRELATION_PREFIX}_*" -o -name "${SAMPLE_PREFIX}_*" \) | while read -r file; do
     filename=$(basename "$file")
     keep_file=false
     
@@ -656,6 +680,9 @@ if [[ "$KEEP_NON_UNIQUE" = true ]]; then
     READ_FILTERING_METHOD="Kept all mapped reads (including non-unique)"
 fi
 
+# Record correlation method
+CORRELATION_METHOD_DISPLAY=$CORRELATION_DESCRIPTION
+
 cat > "${SAMPLE_PREFIX}_pipeline_parameters.txt" << EOF
 sRNA Analysis Pipeline Runtime Parameters
 Run time: $(date)
@@ -663,8 +690,9 @@ Reference genome (pre-assembled contigs): $FASTA_FILE ($FASTA_BASENAME)
 Sequencing data: $READS_FILE ($READS_BASENAME)
 Benchmark method: $BENCHMARK_METHOD
 Read filtering: $READ_FILTERING_METHOD
+Correlation method: $CORRELATION_METHOD_DISPLAY
 Output directory: $OUTPUT_DIR
-Feature vector dimension: ${VECTOR_D}-dimensional
+Feature vector mode: $VECTOR_MODE
 
 Performance configuration:
 - Total threads: $TOTAL_THREADS
@@ -673,14 +701,14 @@ Performance configuration:
 - Sort memory: $SORT_MEMORY
 - unisRNA cores: $UNISRNA_CORES
 - sRNA_vfv cores: $SRNAVFV_CORES
-- Spearman cores: $SPEARMAN_CORES
+- Correlation cores: $CORRELATION_CORES
 
 Analysis parameters:
 - sRNA length range: ${MIN_LENGTH}-${MAX_LENGTH}nt
 - 21nt threshold: $NUMBER_21_NT
 - Specific contigs (threshold: contigs similar to each benchmark): $SPECIFIC_CONTIGS
 - Common contigs (threshold: contigs similar to all benchmarks): $COMMON_CONTIGS
-- Mean Spearman correlation threshold: $MEAN_RS
+- Mean correlation threshold: $MEAN_RS
 - P-value threshold: $P_VALUE
 - Cell height (heatmap height): $CELL_HEIGHT
 - Cell width (heatmap width): $CELL_WIDTH
@@ -691,7 +719,7 @@ Run type: $RESUME_STATUS
 Essential output files:
 - Final BAM: $FINAL_BAM
 - BAM index: $FINAL_BAM_INDEX
-- ${VECTOR_D}D features: $FEATURE_CSV
+- ${VECTOR_MODE} features: $FEATURE_CSV
 EOF
 
 # Add intermediate file info if it exists
@@ -702,8 +730,8 @@ EOF
 fi
 
 cat >> "${SAMPLE_PREFIX}_pipeline_parameters.txt" << EOF
-- Clustering heatmap: ${SPEARMAN_PREFIX}_spearman_clustering_heatmap.svg
-- Filtered contigs: ${SPEARMAN_PREFIX}_filtered_contigs.csv
+- Clustering heatmap: ${CORRELATION_PREFIX}_${CORRELATION_METHOD}_clustering_heatmap.svg
+- Filtered contigs: ${CORRELATION_PREFIX}_filtered_contigs.csv
 EOF
 
 log_success "Runtime parameters saved to: ${SAMPLE_PREFIX}_pipeline_parameters.txt"

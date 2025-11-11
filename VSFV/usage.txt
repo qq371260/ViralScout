@@ -1,30 +1,32 @@
 Please place all your files in the VSFV folder
 Usage:
 
-bash unisRNA_vfv.sh \     
+bash VSFV.sh \     
   -f contig_test.fa \ # Set your fasta file with unknown contigs
   -b benchmark_test.txt \ # Input your benchmark contig names; remove this line to use self-defined fictitious vsiRNA_simulant files 
   -r sRNA_test.fastq \ # Set your single virus-infected sequencing dataset
   -o ./result_1 \ # Set your output folder
-  -d 104 \ # Set your sRNA feature vector dimension: 13, 17, 26, 52, 104 
-  --force \ # Remove this line to not cover previous results in the same output folder
-  --keep-non-unique # Remove this line to use uniquely mapped sRNAs in each contig
+  -m sizeX5ntXstr \ # Set your sRNA feature vector dimension: size, size_P_5nt, sizeXstr, sizeX5nt, sizeX5ntXstr 
+  --force \ # Rerun to cover previous results in the same output folder instead of default continue
+  --keep-non-unique # Use all mapped sRNAs in each contig instead of default uniquely mapped sRNAs
+  --pearson # Use Pearson correlation instead of default Spearman correlation
 
 For more information, please enter this command in a supported platform such as Ubuntu: bash unisRNA_vfv.sh -h
 Run using test files to check deployment:
 
-bash unisRNA_vfv.sh \
+bash VSFV.sh \
   -f contig_test.fa \
   -b benchmark_test.txt \
   -r sRNA_test.fastq \
   -o ./result_1 \
-  -d 104
+  -m sizeX5ntXstr
   
-bash unisRNA_vfv.sh \
+bash VSFV.sh \
   -f contig_test.fa \
   -r sRNA_test.fastq \
   -o ./result_4 \
-  -d 104 \
+  -m sizeX5ntXstr \
   --keep-non-unique
+  --pearson
 
 
