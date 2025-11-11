@@ -1,3 +1,8 @@
+#!/usr/bin/env python3
+"""
+Filter sRNAs mapped to multiple contigs
+"""
+
 import pysam
 import argparse
 import os
