@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 """
-contig_feature.py - Extract contig metrics (size, coverage, GC content) for filtered contigs
+Extract contig metrics (size, coverage, GC content) for filtered contigs
 and merge with existing filtered_contigs.csv
-
-Usage:
-    python contig_feature.py -f reference.fasta -b aligned.bam -c filtered_contigs.csv -o enhanced_contigs.csv
 """
 
 import pandas as pd
