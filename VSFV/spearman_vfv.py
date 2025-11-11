@@ -287,7 +287,7 @@ def main():
             correlations[other_row] = corr
             p_values[other_row] = p_value
 
-        sorted_rows = sorted(correlations.items(), key=lambda x: -abs(x[1]))[:k]
+        sorted_rows = sorted(correlations.items(), key=lambda x: -x[1])[:k]
         return [(row, correlations[row], p_values[row]) for row, _ in sorted_rows]
 
     # Parallel processing for each target row
@@ -389,10 +389,12 @@ def main():
 
                 if len(data1_valid) > 3:
                     corr, _ = spearmanr(data1_valid, data2_valid)
-                    # Convert correlation to distance: distance = 1 - |correlation|
-                    distance = 1 - abs(corr)
+                    # Convert correlation to distance: distance = 1 - correlation
+                    distance = 1 - corr
+                    if np.isnan(distance):
+                        distance = 2.0
                 else:
-                    distance = 1.0  # Maximum distance
+                    distance = 2.0  # Maximum distance
 
                 distance_matrix[i, j] = distance
                 distance_matrix[j, i] = distance
@@ -510,7 +512,7 @@ def main():
             f.write(f"P-value threshold: {args.p_value}\n")
             f.write(f"Heatmap data: Normalized feature values (0-1 proportion)\n")
             f.write(
-                f"Clustering method: Hierarchical clustering based on Spearman correlation (distance = 1 - |Spearman correlation|)\n")
+                f"Clustering method: Hierarchical clustering based on Spearman correlation (distance = 1 - Spearman correlation)\n")
             f.write(f"Data normalization: Each feature value divided by row total (proportion normalization)\n")
 
             if vector_dim == "13":
