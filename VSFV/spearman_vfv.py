@@ -1,3 +1,8 @@
+#!/usr/bin/env python3
+"""
+Spearman correlation of sRNAs feature vectors of viral and other contigs
+"""
+
 import pandas as pd
 import numpy as np
 from joblib import Parallel, delayed
