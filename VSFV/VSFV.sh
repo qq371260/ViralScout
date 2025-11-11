@@ -1,9 +1,10 @@
 #!/bin/bash
 
 # ==================================================================================================
-# sRNA_analysis_pipeline.sh: a method of ViralScout methodology
+# Viral small-RNA feature vector (VSFV) analysis
+# A method of ViralScout methodology
 # It uses variable-dimensional feature vectors counted from uniquely mapped sRNAs of each contig
-# Feature dimensions: 13 (length only), 17 (length + total 5' nt), 26 (length × strand), 52 (length × 5' nt), 104 (length × 5' nt × strand)
+# Feature dimensions: 13 (size), 17 (size + 5' nt), 26 (size × strand), 52 (size × 5' nt), 104 (size × 5' nt × strand)
 # Users can define any their pre-assembled contigs as viral benchmarks by providing names
 # Other contigs were compared with the benchmarks to find virus-like contigs
 # The comparison is based on pairwise Spearman correlation coefficients of feature vectors
