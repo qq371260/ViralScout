@@ -4,8 +4,6 @@ RNA_or_sRNA-seq Differential Expression Analysis
 Generate TPM and Fold Change data with visualization
 Add benchmark contigs distance calculation function
 Support starting analysis from existing results files
-Simplified version: directly use read counts and contig length to calculate TPM
-Retain all contigs for analysis
 """
 
 import argparse

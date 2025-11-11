@@ -1,4 +1,4 @@
-name: ViralScout
+name: ViralScout_env
 
 channels:
   - bioconda
