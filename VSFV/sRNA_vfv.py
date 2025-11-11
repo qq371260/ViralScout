@@ -1,3 +1,7 @@
+#!/usr/bin/env python3
+"""
+Generate sRNAs feature vectors with 13, 17, 26, 52, 104 dimensions
+"""
 import pysam
 from collections import defaultdict
 import csv
