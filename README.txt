@@ -28,7 +28,7 @@ Tested platform: WSL (Windows Subsystem for Linux) with Ubuntu 22.04.3 LTS
 
 
 --------------------------------------------------------------------------------Installation
----------Install conda
+---------Install Conda
 wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
 
 bash Miniconda3-latest-Linux-x86_64.sh
