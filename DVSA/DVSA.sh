@@ -1,10 +1,8 @@
 #!/bin/bash
 
-# ==========================================================
-# RNA_or_sRNA-seq Analysis Pipeline
-# Automatically detects paired-end vs single-end reads
-# Checks for existing BAM files to resume analysis
-# ==========================================================
+# ===================================================================================
+# Differential viral segment abundence analysis (DVSA) pipeline for RNA- or sRNA-seq 
+# ===================================================================================
 
 set -e
 set -u
