@@ -67,8 +67,54 @@ cd ViralScout
 # Please place all required files in this folder and set it as the working directory
 cd DVSA
 
+# Simply run for test files: single reads
+bash DVSA.sh \
+  --contigs contig_test.fa \
+  --positive sRNA-P_test.fastq \
+  --negative sRNA-N_test.fastq \
+  --benchmark benchmark_test.txt \
+  --output ./result_1 \
+  --threads 32
+
+# Simply run for test files: paired reads
+bash DVSA.sh \
+  --contigs contig_test.fa \
+  --positive RNA-P_test_R1.fastq,RNA-P_test_R2.fastq \
+  --negative RNA-N_test_R1.fastq,RNA-N_test_R2.fastq \
+  --benchmark benchmark_test.txt \
+  --output ./result_2 \
+  --threads 32
+
+# For more usage details, please see the usage file
+
 ---------Run VSFV tool
 # Please place all required files in this folder and set it as the working directory
 cd VSFV
+
+# Simply run for test files: using benchmark viral contigs
+bash unisRNA_vfv.sh \
+  -f contig_test.fa \
+  -b benchmark_test.txt \
+  -r sRNA_test.fastq \
+  -o ./result_1 \
+  -d 104
+
+# Simply run for test files: using self-defined vsiRNA_simulant file
+bash unisRNA_vfv.sh \
+  -f contig_test.fa \
+  -r sRNA_test.fastq \
+  -o ./result_2 \
+  -d 104 \
+
+# Simply run for test files: using all sRNAs
+bash unisRNA_vfv.sh \
+  -f contig_test.fa \
+  -b benchmark_test.txt \
+  -r sRNA_test.fastq \
+  -o ./result_3 \
+  -d 104 \
+  --keep-non-unique
+
+# For more usage details, please see the usage file
 
 
