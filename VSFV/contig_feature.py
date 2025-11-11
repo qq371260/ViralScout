@@ -38,7 +38,7 @@ def parse_arguments():
     parser.add_argument('-b', '--bam', required=True,
                         help='Sorted BAM file with mapped reads (must be indexed)')
     parser.add_argument('-c', '--contigs', required=True,
-                        help='Input filtered_contigs.csv file from spearman_vfv.py')
+                        help='Input filtered_contigs.csv file from correlation analysis')
     parser.add_argument('-o', '--output', required=True,
                         help='Output enhanced CSV file with contig metrics')
 
@@ -53,6 +53,23 @@ def parse_arguments():
                         help='Custom benchmarks file name (default: auto-detect any benchmark*.txt file)')
 
     return parser.parse_args()
+
+
+def detect_correlation_method(df):
+    """Detect whether the data uses Spearman or Pearson correlation"""
+    if 'Mean_Spearman_Correlation' in df.columns:
+        return 'spearman'
+    elif 'Mean_Pearson_Correlation' in df.columns:
+        return 'pearson'
+    else:
+        # Try to detect from other column names or filename patterns
+        for col in df.columns:
+            if 'spearman' in col.lower():
+                return 'spearman'
+            elif 'pearson' in col.lower():
+                return 'pearson'
+        # Default to spearman if cannot detect
+        return 'spearman'
 
 
 def extract_first_word(name):
@@ -108,14 +125,25 @@ def load_filtered_contigs(contigs_file):
     logger.info(f"Loading filtered contigs from: {contigs_file}")
     df = pd.read_csv(contigs_file)
 
-    required_columns = ['Contig_Name', 'Mean_Spearman_Correlation', 'P_Value']
+    # Detect correlation method
+    correlation_method = detect_correlation_method(df)
+    logger.info(f"Detected correlation method: {correlation_method}")
+
+    # Set required columns based on detected method
+    if correlation_method == 'pearson':
+        required_columns = ['Contig_Name', 'Mean_Pearson_Correlation', 'P_Value']
+        correlation_column = 'Mean_Pearson_Correlation'
+    else:
+        required_columns = ['Contig_Name', 'Mean_Spearman_Correlation', 'P_Value']
+        correlation_column = 'Mean_Spearman_Correlation'
+
     for col in required_columns:
         if col not in df.columns:
             logger.error(f"Required column '{col}' not found in {contigs_file}")
             sys.exit(1)
 
     logger.info(f"Loaded {len(df)} contigs")
-    return df
+    return df, correlation_method, correlation_column
 
 
 def load_benchmarks(benchmarks_file):
@@ -264,7 +292,7 @@ def calculate_coverage(bam_file, contig_names, min_coverage=0.1, bins=1000, thre
     return coverage_data
 
 
-def merge_metrics(filtered_df, size_gc_metrics, coverage_data):
+def merge_metrics(filtered_df, size_gc_metrics, coverage_data, correlation_column):
     """Merge all metrics into the filtered contigs DataFrame"""
     logger.info("Merging all contig metrics...")
 
@@ -295,7 +323,7 @@ def merge_metrics(filtered_df, size_gc_metrics, coverage_data):
     # Reorder columns for better readability
     column_order = [
         'Contig_Name', 'Size_bp', 'Avg_Coverage', 'GC_Content_percent',
-        'Mean_Spearman_Correlation', 'P_Value'
+        correlation_column, 'P_Value'  # Use dynamic correlation column name
     ]
 
     # Keep any additional columns that might be in the original file
@@ -348,7 +376,7 @@ def generate_benchmarks_features(fasta_file, bam_file, benchmarks, min_coverage=
         return None
 
 
-def generate_summary(enhanced_df, benchmarks_df=None, benchmarks_file=None):
+def generate_summary(enhanced_df, correlation_column, benchmarks_df=None, benchmarks_file=None):
     """Generate summary statistics"""
     logger.info("Generating summary statistics...")
 
@@ -362,7 +390,8 @@ def generate_summary(enhanced_df, benchmarks_df=None, benchmarks_file=None):
         'median_coverage': enhanced_df['Avg_Coverage'].median(),
         'avg_gc': enhanced_df['GC_Content_percent'].mean(),
         'median_gc': enhanced_df['GC_Content_percent'].median(),
-        'avg_correlation': enhanced_df['Mean_Spearman_Correlation'].mean()
+        'avg_correlation': enhanced_df[correlation_column].mean(),  # Use dynamic column name
+        'correlation_method': 'Pearson' if 'pearson' in correlation_column.lower() else 'Spearman'  # Record method
     }
 
     if benchmarks_df is not None:
@@ -392,10 +421,10 @@ def main():
     logger.info(f"Output file: {args.output}")
 
     # Step 1: Load filtered contigs
-    filtered_df = load_filtered_contigs(args.contigs)
+    filtered_df, correlation_method, correlation_column = load_filtered_contigs(args.contigs)
     contig_names = filtered_df['Contig_Name'].tolist()
 
-    # Step 2: Extract sequences to FASTA file (默认行为)
+    # Step 2: Extract sequences to FASTA file
     output_fasta = args.output.replace('.csv', '_sequences.fasta')
     extracted_count = extract_contig_sequences(args.fasta, contig_names, output_fasta)
     logger.info(f"Extracted {extracted_count} contig sequences to {output_fasta}")
@@ -412,7 +441,7 @@ def main():
     )
 
     # Step 5: Merge all metrics
-    enhanced_df = merge_metrics(filtered_df, size_gc_metrics, coverage_data)
+    enhanced_df = merge_metrics(filtered_df, size_gc_metrics, coverage_data, correlation_column)
 
     # Step 6: Auto-detect and process benchmarks file
     benchmarks_df = None
@@ -462,7 +491,7 @@ def main():
         logger.info(f"Benchmark features saved to: {benchmarks_output}")
 
     # Step 7: Generate summary
-    summary = generate_summary(enhanced_df, benchmarks_df, benchmarks_file_used)
+    summary = generate_summary(enhanced_df, correlation_column, benchmarks_df, benchmarks_file_used)
 
     # Step 8: Save results
     enhanced_df.to_csv(args.output, index=False)
@@ -473,6 +502,7 @@ def main():
     with open(summary_file, 'w') as f:
         f.write("Contig Feature Analysis Summary\n")
         f.write("=" * 50 + "\n")
+        f.write(f"Correlation method: {summary['correlation_method']}\n")
         f.write(f"Total contigs analyzed: {summary['total_contigs']}\n")
         f.write(f"Contigs with coverage data: {summary['contigs_with_coverage']}\n")
         f.write(f"Contigs with size data: {summary['contigs_with_size']}\n")
@@ -482,7 +512,7 @@ def main():
         f.write(f"Median coverage: {summary['median_coverage']:.2f}\n")
         f.write(f"Average GC content: {summary['avg_gc']:.2f}%\n")
         f.write(f"Median GC content: {summary['median_gc']:.2f}%\n")
-        f.write(f"Average Spearman correlation: {summary['avg_correlation']:.4f}\n")
+        f.write(f"Average {summary['correlation_method']} correlation: {summary['avg_correlation']:.4f}\n")
         f.write(f"Contig sequences extracted: {extracted_count}\n")
 
         if benchmarks_df is not None:
@@ -499,10 +529,12 @@ def main():
     print("\n" + "=" * 60)
     print("QUICK SUMMARY")
     print("=" * 60)
+    print(f"Correlation method: {summary['correlation_method']}")
     print(f"Total contigs: {summary['total_contigs']}")
     print(f"Average size: {summary['avg_size']:.0f} bp")
     print(f"Average coverage: {summary['avg_coverage']:.2f}")
     print(f"Average GC content: {summary['avg_gc']:.2f}%")
+    print(f"Average correlation: {summary['avg_correlation']:.4f}")
     print(f"Contigs with zero coverage: {summary['total_contigs'] - summary['contigs_with_coverage']}")
     print(f"Contig sequences extracted: {extracted_count}")
 
@@ -513,15 +545,15 @@ def main():
     print("=" * 60)
 
     # Show top 10 contigs by correlation
-    print("\nTop 10 contigs by Spearman correlation:")
+    print(f"\nTop 10 contigs by {summary['correlation_method']} correlation:")
     print("-" * 80)
-    top_contigs = enhanced_df.nlargest(10, 'Mean_Spearman_Correlation')[
-        ['Contig_Name', 'Size_bp', 'Avg_Coverage', 'GC_Content_percent', 'Mean_Spearman_Correlation']
+    top_contigs = enhanced_df.nlargest(10, correlation_column)[
+        ['Contig_Name', 'Size_bp', 'Avg_Coverage', 'GC_Content_percent', correlation_column]
     ]
     for idx, row in top_contigs.iterrows():
         print(f"{row['Contig_Name']:20} | Size: {row['Size_bp']:8} bp | "
               f"Cov: {row['Avg_Coverage']:6.2f} | GC: {row['GC_Content_percent']:5.1f}% | "
-              f"Corr: {row['Mean_Spearman_Correlation']:.4f}")
+              f"Corr: {row[correlation_column]:.4f}")
 
     # Show benchmark contigs if available
     if benchmarks_df is not None:
