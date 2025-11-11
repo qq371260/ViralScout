@@ -1,8 +1,11 @@
 #!/bin/bash
 
 # ===================================================================================
-# Differential viral segment abundence analysis (DVSA) pipeline for RNA- or sRNA-seq 
+# Differential viral segment abundence analysis (DVSA) pipeline for RNA- or sRNA-seq
+# Methods of ViralScout methodology
+# Please put all needed files in current directory
 # ===================================================================================
+
 
 set -e
 set -u
