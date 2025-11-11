@@ -3,6 +3,8 @@
 # ===================================================================================
 # Differential viral segment abundence analysis (DVSA) pipeline for RNA- or sRNA-seq
 # Methods of ViralScout methodology
+# Users can define any their pre-assembled contigs as viral benchmarks by providing names
+# Caculate the Euclidean distance (TRM, FC) between unknown contigs with the centroid of viral benchmarks
 # Please put all needed files in current directory
 # ===================================================================================
 
