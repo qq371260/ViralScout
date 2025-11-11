@@ -1,0 +1,30 @@
+Please place all your files in the DVSA folder
+Usage:
+
+bash DVSA.sh \
+  --contigs contig_test.fa \ # Set your fasta file with unknown contigs
+  --positive sRNA-P_test.fastq \ # Set your single virus-infected sequencing dataset, single or paired reads (--positive RNA-P_test_R1.fastq,RNA-P_test_R2.fastq)
+  --negative sRNA-N_test.fastq \ # Set your single virus-uninfected sequencing dataset, single or paired reads (--negative RNA-N_test_R1.fastq,RNA-N_test_R2.fastq)
+  --benchmark benchmark_test.txt \ # Set your txt file with simple list of benchmark contig names, one name per line, no header
+  --output ./result_1 \ # Set your output folder
+  --threads 32 \ # Set your CPU cores for running
+  --force # Force to run, will cover previous results in the same output folder
+  
+For more information, please enter this command in a supported platform such as Ubuntu: bash DVSA.sh -h
+Run using test files to check deployment:
+
+bash DVSA.sh \
+  --contigs contig_test.fa \
+  --positive sRNA-P_test.fastq \
+  --negative sRNA-N_test.fastq \
+  --benchmark benchmark_test.txt \
+  --output ./result_1 \
+  --threads 32
+ 
+ bash DVSA.sh \
+  --contigs contig_test.fa \
+  --positive RNA-P_test_R1.fastq,RNA-P_test_R2.fastq \
+  --negative RNA-N_test_R1.fastq,RNA-N_test_R2.fastq \
+  --benchmark benchmark_test.txt \
+  --output ./result_2 \
+  --threads 32
