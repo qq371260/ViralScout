@@ -23,7 +23,7 @@ scikit-learn=1.3.0
 joblib=1.3.2
 biopython=1.79
 
-Environment management system: conda 25.5.1
+Environment management system: Conda 25.5.1
 Tested platform: WSL (Windows Subsystem for Linux) with Ubuntu 22.04.3 LTS
 
 
