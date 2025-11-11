@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+"""
+Similar to differential gene expression analysis, but without multiple dataset replicates
+and specific for virus identification
+"""
 
 import argparse
 import numpy as np
