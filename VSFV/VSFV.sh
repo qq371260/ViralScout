@@ -534,7 +534,7 @@ if [[ -f "../contig_feature.py" ]] && [[ -f "$FILTERED_CONTIGS_FILE" ]]; then
         log_info "Using filtered contigs file: $FILTERED_CONTIGS_FILE"
         
         # Build contig_feature arguments - only use benchmarks file if explicitly provided
-        CONTIG_FEATURE_ARGS="-f '../$FASTA_FILE' -b '$FINAL_BAM' -c '$FILTERED_CONTIGS_FILE' -o '$ENHANCED_CONTIGS_FILE' --threads $SAMTOOLS_THREADS"
+        CONTIG_FEATURE_ARGS="-f '../$FASTA_FILE' -b '$FINAL_BAM' -c '$FILTERED_CONTIGS_FILE' -o '$ENHANCED_CONTIGS_FILE' --threads $SAMTOOLS_THREADS --min-length $MIN_LENGTH --max-length $MAX_LENGTH"
         
         # Only add benchmarks-file argument if benchmarks file was provided to the main script
         if [[ -n "$BENCHMARK_FILE" ]]; then
@@ -732,6 +732,12 @@ fi
 cat >> "${SAMPLE_PREFIX}_pipeline_parameters.txt" << EOF
 - Clustering heatmap: ${CORRELATION_PREFIX}_${CORRELATION_METHOD}_clustering_heatmap.svg
 - Filtered contigs: ${CORRELATION_PREFIX}_filtered_contigs.csv
+EOF
+
+cat >> "${SAMPLE_PREFIX}_pipeline_parameters.txt" << EOF
+- Enhanced contig features: ${CORRELATION_PREFIX}_enhanced_contigs.csv
+- Enhanced contig sequences: ${CORRELATION_PREFIX}_enhanced_contigs_sequences.fasta
+- sRNA length range for feature analysis: ${MIN_LENGTH}-${MAX_LENGTH}nt
 EOF
 
 log_success "Runtime parameters saved to: ${SAMPLE_PREFIX}_pipeline_parameters.txt"

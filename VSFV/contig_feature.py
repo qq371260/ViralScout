@@ -51,6 +51,10 @@ def parse_arguments():
                         help='Number of bins for coverage calculation in large contigs (default: 1000)')
     parser.add_argument('--benchmarks-file', type=str, default=None,
                         help='Custom benchmarks file name (default: auto-detect any benchmark*.txt file)')
+    parser.add_argument('--min-length', type=int, default=18,
+                        help='Minimum sRNA length to consider (default: 18)')
+    parser.add_argument('--max-length', type=int, default=30,
+                        help='Maximum sRNA length to consider (default: 30)')
 
     return parser.parse_args()
 
@@ -195,6 +199,115 @@ def get_contig_sizes_and_gc(fasta_file, contig_names):
     return contig_metrics
 
 
+def calculate_sRNA_length_distribution(bam_file, contig_names, min_length=18, max_length=30, threads=1):
+    """
+    Calculate sRNA length distribution for each contig
+    Returns dictionary with total reads, 21nt percentage, and 22nt percentage
+    """
+    logger.info(f"Calculating sRNA length distribution from BAM file: {bam_file}")
+    logger.info(f"Length range: {min_length}-{max_length} nt")
+
+    # Check if BAM file is indexed
+    if not os.path.exists(bam_file + '.bai'):
+        logger.error(f"BAM index not found: {bam_file}.bai")
+        logger.error("Please index the BAM file with: samtools index your_file.bam")
+        sys.exit(1)
+
+    sRNA_data = {}
+    bam = pysam.AlignmentFile(bam_file, "rb", threads=threads)
+
+    # Create mapping from first word to full contig names in BAM
+    bam_contig_map = {}
+    for seq in bam.header['SQ']:
+        full_name = seq['SN']
+        first_word = extract_first_word(full_name)
+        bam_contig_map[first_word] = full_name
+
+    processed = 0
+    total_contigs = len(contig_names)
+
+    for contig_first_word in contig_names:
+        processed += 1
+        if processed % 100 == 0:
+            logger.info(f"Processed {processed}/{total_contigs} contigs for sRNA length distribution")
+
+        try:
+            # Get full contig name from BAM
+            if contig_first_word not in bam_contig_map:
+                logger.warning(f"Contig {contig_first_word} not found in BAM header, skipping sRNA analysis")
+                sRNA_data[contig_first_word] = {
+                    'total_sRNA_reads': 0,
+                    'sRNA_21nt_percent': 0.0,
+                    'sRNA_22nt_percent': 0.0,
+                    'sRNA_21_22nt_percent': 0.0
+                }
+                continue
+
+            full_contig_name = bam_contig_map[contig_first_word]
+
+            # Initialize counters
+            total_reads = 0
+            count_21nt = 0
+            count_22nt = 0
+
+            # Iterate through reads mapped to this contig
+            for read in bam.fetch(full_contig_name):
+                read_length = read.query_length
+
+                # Only count reads within the specified length range
+                if min_length <= read_length <= max_length:
+                    total_reads += 1
+                    if read_length == 21:
+                        count_21nt += 1
+                    elif read_length == 22:
+                        count_22nt += 1
+
+            # Calculate percentages
+            sRNA_21nt_percent = (count_21nt / total_reads * 100) if total_reads > 0 else 0.0
+            sRNA_22nt_percent = (count_22nt / total_reads * 100) if total_reads > 0 else 0.0
+            sRNA_21_22nt_percent = sRNA_21nt_percent + sRNA_22nt_percent
+
+            sRNA_data[contig_first_word] = {
+                'total_sRNA_reads': total_reads,
+                'sRNA_21nt_percent': sRNA_21nt_percent,
+                'sRNA_22nt_percent': sRNA_22nt_percent,
+                'sRNA_21_22nt_percent': sRNA_21_22nt_percent
+            }
+
+        except ValueError as e:
+            logger.warning(f"Error calculating sRNA distribution for {contig_first_word}: {e}")
+            sRNA_data[contig_first_word] = {
+                'total_sRNA_reads': 0,
+                'sRNA_21nt_percent': 0.0,
+                'sRNA_22nt_percent': 0.0,
+                'sRNA_21_22nt_percent': 0.0
+            }
+        except Exception as e:
+            logger.warning(f"Unexpected error for {contig_first_word}: {e}")
+            sRNA_data[contig_first_word] = {
+                'total_sRNA_reads': 0,
+                'sRNA_21nt_percent': 0.0,
+                'sRNA_22nt_percent': 0.0,
+                'sRNA_21_22nt_percent': 0.0
+            }
+
+    bam.close()
+
+    # Log summary statistics
+    total_sRNA_reads = sum(data['total_sRNA_reads'] for data in sRNA_data.values())
+    avg_21nt_percent = np.mean(
+        [data['sRNA_21nt_percent'] for data in sRNA_data.values() if data['total_sRNA_reads'] > 0])
+    avg_22nt_percent = np.mean(
+        [data['sRNA_22nt_percent'] for data in sRNA_data.values() if data['total_sRNA_reads'] > 0])
+
+    logger.info(f"sRNA length distribution analysis completed for {len(sRNA_data)} contigs")
+    logger.info(f"Total sRNA reads: {total_sRNA_reads}")
+    logger.info(f"Average 21nt percentage: {avg_21nt_percent:.2f}%")
+    logger.info(f"Average 22nt percentage: {avg_22nt_percent:.2f}%")
+
+    return sRNA_data
+
+
 def calculate_coverage(bam_file, contig_names, min_coverage=0.1, bins=1000, threads=1):
     """Calculate average coverage for contigs from BAM file"""
     logger.info(f"Calculating coverage from BAM file: {bam_file}")
@@ -292,7 +405,7 @@ def calculate_coverage(bam_file, contig_names, min_coverage=0.1, bins=1000, thre
     return coverage_data
 
 
-def merge_metrics(filtered_df, size_gc_metrics, coverage_data, correlation_column):
+def merge_metrics(filtered_df, size_gc_metrics, coverage_data, sRNA_data, correlation_column):
     """Merge all metrics into the filtered contigs DataFrame"""
     logger.info("Merging all contig metrics...")
 
@@ -300,6 +413,10 @@ def merge_metrics(filtered_df, size_gc_metrics, coverage_data, correlation_colum
     sizes = []
     gc_contents = []
     coverages = []
+    total_sRNA_reads = []
+    sRNA_21nt_percents = []
+    sRNA_22nt_percents = []
+    sRNA_21_22nt_percents = []
 
     for contig in filtered_df['Contig_Name']:
         if contig in size_gc_metrics:
@@ -314,15 +431,31 @@ def merge_metrics(filtered_df, size_gc_metrics, coverage_data, correlation_colum
         else:
             coverages.append(0.0)
 
+        if contig in sRNA_data:
+            total_sRNA_reads.append(sRNA_data[contig]['total_sRNA_reads'])
+            sRNA_21nt_percents.append(sRNA_data[contig]['sRNA_21nt_percent'])
+            sRNA_22nt_percents.append(sRNA_data[contig]['sRNA_22nt_percent'])
+            sRNA_21_22nt_percents.append(sRNA_data[contig]['sRNA_21_22nt_percent'])
+        else:
+            total_sRNA_reads.append(0)
+            sRNA_21nt_percents.append(0.0)
+            sRNA_22nt_percents.append(0.0)
+            sRNA_21_22nt_percents.append(0.0)
+
     # Add new columns to DataFrame
     enhanced_df = filtered_df.copy()
     enhanced_df['Size_bp'] = sizes
     enhanced_df['GC_Content_percent'] = gc_contents
     enhanced_df['Avg_Coverage'] = coverages
+    enhanced_df['Total_sRNA_Reads'] = total_sRNA_reads
+    enhanced_df['sRNA_21nt_Percent'] = sRNA_21nt_percents
+    enhanced_df['sRNA_22nt_Percent'] = sRNA_22nt_percents
+    enhanced_df['sRNA_21_22nt_Percent'] = sRNA_21_22nt_percents
 
     # Reorder columns for better readability
     column_order = [
         'Contig_Name', 'Size_bp', 'Avg_Coverage', 'GC_Content_percent',
+        'Total_sRNA_Reads', 'sRNA_21nt_Percent', 'sRNA_22nt_Percent', 'sRNA_21_22nt_Percent',
         correlation_column, 'P_Value'  # Use dynamic correlation column name
     ]
 
@@ -333,7 +466,8 @@ def merge_metrics(filtered_df, size_gc_metrics, coverage_data, correlation_colum
     return enhanced_df[final_column_order]
 
 
-def generate_benchmarks_features(fasta_file, bam_file, benchmarks, min_coverage=0.1, bins=1000, threads=1):
+def generate_benchmarks_features(fasta_file, bam_file, benchmarks, min_coverage=0.1, bins=1000, threads=1,
+                                 min_length=18, max_length=30):
     """Generate feature metrics for benchmark contigs"""
     if not benchmarks:
         logger.warning("No benchmark contigs provided")
@@ -347,15 +481,22 @@ def generate_benchmarks_features(fasta_file, bam_file, benchmarks, min_coverage=
     # Calculate coverage
     coverage_data = calculate_coverage(bam_file, benchmarks, min_coverage, bins, threads)
 
+    # Calculate sRNA length distribution
+    sRNA_data = calculate_sRNA_length_distribution(bam_file, benchmarks, min_length, max_length, threads)
+
     # Create DataFrame
     benchmarks_data = []
     for contig in benchmarks:
-        if contig in size_gc_metrics and contig in coverage_data:
+        if contig in size_gc_metrics and contig in coverage_data and contig in sRNA_data:
             benchmarks_data.append({
                 'Contig_Name': contig,
                 'Size_bp': size_gc_metrics[contig]['Size_bp'],
                 'Avg_Coverage': coverage_data[contig],
                 'GC_Content_percent': size_gc_metrics[contig]['GC_Content_percent'],
+                'Total_sRNA_Reads': sRNA_data[contig]['total_sRNA_reads'],
+                'sRNA_21nt_Percent': sRNA_data[contig]['sRNA_21nt_percent'],
+                'sRNA_22nt_Percent': sRNA_data[contig]['sRNA_22nt_percent'],
+                'sRNA_21_22nt_Percent': sRNA_data[contig]['sRNA_21_22nt_percent'],
                 'Type': 'Benchmark'
             })
         elif contig in size_gc_metrics:
@@ -364,6 +505,10 @@ def generate_benchmarks_features(fasta_file, bam_file, benchmarks, min_coverage=
                 'Size_bp': size_gc_metrics[contig]['Size_bp'],
                 'Avg_Coverage': 0.0,
                 'GC_Content_percent': size_gc_metrics[contig]['GC_Content_percent'],
+                'Total_sRNA_Reads': sRNA_data.get(contig, {}).get('total_sRNA_reads', 0),
+                'sRNA_21nt_Percent': sRNA_data.get(contig, {}).get('sRNA_21nt_percent', 0.0),
+                'sRNA_22nt_Percent': sRNA_data.get(contig, {}).get('sRNA_22nt_percent', 0.0),
+                'sRNA_21_22nt_Percent': sRNA_data.get(contig, {}).get('sRNA_21_22nt_percent', 0.0),
                 'Type': 'Benchmark'
             })
 
@@ -384,12 +529,21 @@ def generate_summary(enhanced_df, correlation_column, benchmarks_df=None, benchm
         'total_contigs': len(enhanced_df),
         'contigs_with_coverage': len(enhanced_df[enhanced_df['Avg_Coverage'] > 0]),
         'contigs_with_size': len(enhanced_df[enhanced_df['Size_bp'] > 0]),
+        'contigs_with_sRNA': len(enhanced_df[enhanced_df['Total_sRNA_Reads'] > 0]),
         'avg_size': enhanced_df['Size_bp'].mean(),
         'median_size': enhanced_df['Size_bp'].median(),
         'avg_coverage': enhanced_df['Avg_Coverage'].mean(),
         'median_coverage': enhanced_df['Avg_Coverage'].median(),
         'avg_gc': enhanced_df['GC_Content_percent'].mean(),
         'median_gc': enhanced_df['GC_Content_percent'].median(),
+        'avg_total_sRNA': enhanced_df['Total_sRNA_Reads'].mean(),
+        'median_total_sRNA': enhanced_df['Total_sRNA_Reads'].median(),
+        'avg_21nt_percent': enhanced_df['sRNA_21nt_Percent'].mean(),
+        'median_21nt_percent': enhanced_df['sRNA_21nt_Percent'].median(),
+        'avg_22nt_percent': enhanced_df['sRNA_22nt_Percent'].mean(),
+        'median_22nt_percent': enhanced_df['sRNA_22nt_Percent'].median(),
+        'avg_21_22nt_percent': enhanced_df['sRNA_21_22nt_Percent'].mean(),
+        'median_21_22nt_percent': enhanced_df['sRNA_21_22nt_Percent'].median(),
         'avg_correlation': enhanced_df[correlation_column].mean(),  # Use dynamic column name
         'correlation_method': 'Pearson' if 'pearson' in correlation_column.lower() else 'Spearman'  # Record method
     }
@@ -399,6 +553,10 @@ def generate_summary(enhanced_df, correlation_column, benchmarks_df=None, benchm
         summary['benchmark_avg_size'] = benchmarks_df['Size_bp'].mean()
         summary['benchmark_avg_coverage'] = benchmarks_df['Avg_Coverage'].mean()
         summary['benchmark_avg_gc'] = benchmarks_df['GC_Content_percent'].mean()
+        summary['benchmark_avg_total_sRNA'] = benchmarks_df['Total_sRNA_Reads'].mean()
+        summary['benchmark_avg_21nt_percent'] = benchmarks_df['sRNA_21nt_Percent'].mean()
+        summary['benchmark_avg_22nt_percent'] = benchmarks_df['sRNA_22nt_Percent'].mean()
+        summary['benchmark_avg_21_22nt_percent'] = benchmarks_df['sRNA_21_22nt_Percent'].mean()
         summary['benchmark_file'] = benchmarks_file
 
     return summary
@@ -419,6 +577,7 @@ def main():
     logger.info(f"BAM file: {args.bam}")
     logger.info(f"Contigs file: {args.contigs}")
     logger.info(f"Output file: {args.output}")
+    logger.info(f"sRNA length range: {args.min_length}-{args.max_length} nt")
 
     # Step 1: Load filtered contigs
     filtered_df, correlation_method, correlation_column = load_filtered_contigs(args.contigs)
@@ -432,7 +591,15 @@ def main():
     # Step 3: Extract size and GC content from FASTA
     size_gc_metrics = get_contig_sizes_and_gc(args.fasta, contig_names)
 
-    # Step 4: Calculate coverage from BAM
+    # Step 4: Calculate sRNA length distribution
+    sRNA_data = calculate_sRNA_length_distribution(
+        args.bam, contig_names,
+        min_length=args.min_length,
+        max_length=args.max_length,
+        threads=args.threads
+    )
+
+    # Step 5: Calculate coverage from BAM
     coverage_data = calculate_coverage(
         args.bam, contig_names,
         min_coverage=args.min_coverage,
@@ -440,10 +607,10 @@ def main():
         threads=args.threads
     )
 
-    # Step 5: Merge all metrics
-    enhanced_df = merge_metrics(filtered_df, size_gc_metrics, coverage_data, correlation_column)
+    # Step 6: Merge all metrics
+    enhanced_df = merge_metrics(filtered_df, size_gc_metrics, coverage_data, sRNA_data, correlation_column)
 
-    # Step 6: Auto-detect and process benchmarks file
+    # Step 7: Auto-detect and process benchmarks file
     benchmarks_df = None
     benchmarks_file_used = None
 
@@ -470,7 +637,9 @@ def main():
                 args.fasta, args.bam, benchmarks,
                 min_coverage=args.min_coverage,
                 bins=args.coverage_bins,
-                threads=args.threads
+                threads=args.threads,
+                min_length=args.min_length,
+                max_length=args.max_length
             )
         else:
             logger.warning(f"Specified benchmarks file not found in any location: {args.benchmarks_file}")
@@ -490,10 +659,10 @@ def main():
         benchmarks_df.to_csv(benchmarks_output, index=False)
         logger.info(f"Benchmark features saved to: {benchmarks_output}")
 
-    # Step 7: Generate summary
+    # Step 8: Generate summary
     summary = generate_summary(enhanced_df, correlation_column, benchmarks_df, benchmarks_file_used)
 
-    # Step 8: Save results
+    # Step 9: Save results
     enhanced_df.to_csv(args.output, index=False)
     logger.info(f"Enhanced contig data saved to: {args.output}")
 
@@ -506,12 +675,21 @@ def main():
         f.write(f"Total contigs analyzed: {summary['total_contigs']}\n")
         f.write(f"Contigs with coverage data: {summary['contigs_with_coverage']}\n")
         f.write(f"Contigs with size data: {summary['contigs_with_size']}\n")
+        f.write(f"Contigs with sRNA data: {summary['contigs_with_sRNA']}\n")
         f.write(f"Average contig size: {summary['avg_size']:.0f} bp\n")
         f.write(f"Median contig size: {summary['median_size']:.0f} bp\n")
         f.write(f"Average coverage: {summary['avg_coverage']:.2f}\n")
         f.write(f"Median coverage: {summary['median_coverage']:.2f}\n")
         f.write(f"Average GC content: {summary['avg_gc']:.2f}%\n")
         f.write(f"Median GC content: {summary['median_gc']:.2f}%\n")
+        f.write(f"Average total sRNA reads: {summary['avg_total_sRNA']:.1f}\n")
+        f.write(f"Median total sRNA reads: {summary['median_total_sRNA']:.1f}\n")
+        f.write(f"Average 21nt percentage: {summary['avg_21nt_percent']:.2f}%\n")
+        f.write(f"Median 21nt percentage: {summary['median_21nt_percent']:.2f}%\n")
+        f.write(f"Average 22nt percentage: {summary['avg_22nt_percent']:.2f}%\n")
+        f.write(f"Median 22nt percentage: {summary['median_22nt_percent']:.2f}%\n")
+        f.write(f"Average 21+22nt percentage: {summary['avg_21_22nt_percent']:.2f}%\n")
+        f.write(f"Median 21+22nt percentage: {summary['median_21_22nt_percent']:.2f}%\n")
         f.write(f"Average {summary['correlation_method']} correlation: {summary['avg_correlation']:.4f}\n")
         f.write(f"Contig sequences extracted: {extracted_count}\n")
 
@@ -522,6 +700,10 @@ def main():
             f.write(f"Average benchmark size: {summary['benchmark_avg_size']:.0f} bp\n")
             f.write(f"Average benchmark coverage: {summary['benchmark_avg_coverage']:.2f}\n")
             f.write(f"Average benchmark GC content: {summary['benchmark_avg_gc']:.2f}%\n")
+            f.write(f"Average benchmark total sRNA: {summary['benchmark_avg_total_sRNA']:.1f}\n")
+            f.write(f"Average benchmark 21nt percentage: {summary['benchmark_avg_21nt_percent']:.2f}%\n")
+            f.write(f"Average benchmark 22nt percentage: {summary['benchmark_avg_22nt_percent']:.2f}%\n")
+            f.write(f"Average benchmark 21+22nt percentage: {summary['benchmark_avg_21_22nt_percent']:.2f}%\n")
 
     logger.info(f"Summary saved to: {summary_file}")
 
@@ -534,8 +716,13 @@ def main():
     print(f"Average size: {summary['avg_size']:.0f} bp")
     print(f"Average coverage: {summary['avg_coverage']:.2f}")
     print(f"Average GC content: {summary['avg_gc']:.2f}%")
+    print(f"Average total sRNA reads: {summary['avg_total_sRNA']:.1f}")
+    print(f"Average 21nt percentage: {summary['avg_21nt_percent']:.2f}%")
+    print(f"Average 22nt percentage: {summary['avg_22nt_percent']:.2f}%")
+    print(f"Average 21+22nt percentage: {summary['avg_21_22nt_percent']:.2f}%")
     print(f"Average correlation: {summary['avg_correlation']:.4f}")
     print(f"Contigs with zero coverage: {summary['total_contigs'] - summary['contigs_with_coverage']}")
+    print(f"Contigs with zero sRNA: {summary['total_contigs'] - summary['contigs_with_sRNA']}")
     print(f"Contig sequences extracted: {extracted_count}")
 
     if benchmarks_df is not None:
@@ -546,22 +733,27 @@ def main():
 
     # Show top 10 contigs by correlation
     print(f"\nTop 10 contigs by {summary['correlation_method']} correlation:")
-    print("-" * 80)
+    print("-" * 100)
     top_contigs = enhanced_df.nlargest(10, correlation_column)[
-        ['Contig_Name', 'Size_bp', 'Avg_Coverage', 'GC_Content_percent', correlation_column]
+        ['Contig_Name', 'Size_bp', 'Avg_Coverage', 'GC_Content_percent',
+         'Total_sRNA_Reads', 'sRNA_21nt_Percent', 'sRNA_22nt_Percent', correlation_column]
     ]
     for idx, row in top_contigs.iterrows():
         print(f"{row['Contig_Name']:20} | Size: {row['Size_bp']:8} bp | "
               f"Cov: {row['Avg_Coverage']:6.2f} | GC: {row['GC_Content_percent']:5.1f}% | "
+              f"sRNA: {row['Total_sRNA_Reads']:6} | "
+              f"21nt: {row['sRNA_21nt_Percent']:5.1f}% | 22nt: {row['sRNA_22nt_Percent']:5.1f}% | "
               f"Corr: {row[correlation_column]:.4f}")
 
     # Show benchmark contigs if available
     if benchmarks_df is not None:
         print("\nBenchmark contigs:")
-        print("-" * 80)
+        print("-" * 100)
         for idx, row in benchmarks_df.iterrows():
             print(f"{row['Contig_Name']:20} | Size: {row['Size_bp']:8} bp | "
-                  f"Cov: {row['Avg_Coverage']:6.2f} | GC: {row['GC_Content_percent']:5.1f}%")
+                  f"Cov: {row['Avg_Coverage']:6.2f} | GC: {row['GC_Content_percent']:5.1f}% | "
+                  f"sRNA: {row['Total_sRNA_Reads']:6} | "
+                  f"21nt: {row['sRNA_21nt_Percent']:5.1f}% | 22nt: {row['sRNA_22nt_Percent']:5.1f}%")
 
 
 if __name__ == "__main__":
