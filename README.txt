@@ -4,8 +4,9 @@
 contigs to benchmark viral contigs to identify virus-like contigs.
 
 ---------VSFV (Viral Small-RNAs Feature Vector) analysis tool:
-Using 13-, 17-, 26-, 52-, and 104-dimensional feature vectors of all or uniquely
-mapped sRNAs of contigs to identify virus-like contigs based on Spearman
+Using sRNA feature vector of size (dimension n = max. sRNA size - min. sRNA size + 1),
+size_P_5nt (n + 3), sizeXstr (2n), sizeX5nt (4n), and sizeX5ntXstr (8n) from all or
+uniquely mapped sRNAs of contigs to identify virus-like contigs based on Spearman
 correlation to benchmark viral contigs or self-defined reference sRNA feature vectors.
 
 
