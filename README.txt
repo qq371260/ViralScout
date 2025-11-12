@@ -91,29 +91,12 @@ bash DVSA.sh \
 # Please place all required files in this folder and set it as the working directory
 cd VSFV
 
-# Simply run for test files: using benchmark viral contigs
+# Simply run for test files:
 bash unisRNA_vfv.sh \
   -f contig_test.fa \
+  -r sRNA_test.fastq \
   -b benchmark_test.txt \
-  -r sRNA_test.fastq \
-  -o ./result_1 \
-  -d 104
-
-# Simply run for test files: using self-defined vsiRNA_simulant file
-bash unisRNA_vfv.sh \
-  -f contig_test.fa \
-  -r sRNA_test.fastq \
-  -o ./result_2 \
-  -d 104 \
-
-# Simply run for test files: using all sRNAs
-bash unisRNA_vfv.sh \
-  -f contig_test.fa \
-  -b benchmark_test.txt \
-  -r sRNA_test.fastq \
-  -o ./result_3 \
-  -d 104 \
-  --keep-non-unique
+  -o ./result_1
 
 # For more usage details, please see the usage file
 
