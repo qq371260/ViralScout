@@ -499,8 +499,6 @@ def main():
     if not args.no_plot:
         print("Plotting strictly corresponding heatmap and dendrogram using clustermap...")
 
-        import matplotlib.patches as patches
-
         # Custom figure size (automatically adjusted based on number of rows and columns)
         min_width = 10
         min_height = 8
