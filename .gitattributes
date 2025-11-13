@@ -1,0 +1,4 @@
+cat > .gitattributes << 'EOF'
+# Ensure shell scripts use Unix line endings (LF) on all platforms
+*.sh text eol=lf
+EOF
