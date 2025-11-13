@@ -4,8 +4,9 @@
 contigs to benchmark viral contigs to identify virus-like contigs.
 
 ---------VSFV (Viral Small-RNAs Feature Vector) analysis tool:
-Using 13-, 17-, 26-, 52-, and 104-dimensional feature vectors of all or uniquely
-mapped sRNAs of contigs to identify virus-like contigs based on Spearman
+Using sRNA feature vector of size (dimension n = max. sRNA size - min. sRNA size + 1),
+size_P_5nt (n + 3), sizeXstr (2n), sizeX5nt (4n), and sizeX5ntXstr (8n) from all or
+uniquely mapped sRNAs of contigs to identify virus-like contigs based on Spearman
 correlation to benchmark viral contigs or self-defined reference sRNA feature vectors.
 
 
@@ -91,29 +92,12 @@ bash DVSA.sh \
 # Please place all required files in this folder and set it as the working directory
 cd VSFV
 
-# Simply run for test files: using benchmark viral contigs
+# Simply run for test files:
 bash unisRNA_vfv.sh \
   -f contig_test.fa \
+  -r sRNA_test.fastq \
   -b benchmark_test.txt \
-  -r sRNA_test.fastq \
-  -o ./result_1 \
-  -d 104
-
-# Simply run for test files: using self-defined vsiRNA_simulant file
-bash unisRNA_vfv.sh \
-  -f contig_test.fa \
-  -r sRNA_test.fastq \
-  -o ./result_2 \
-  -d 104 \
-
-# Simply run for test files: using all sRNAs
-bash unisRNA_vfv.sh \
-  -f contig_test.fa \
-  -b benchmark_test.txt \
-  -r sRNA_test.fastq \
-  -o ./result_3 \
-  -d 104 \
-  --keep-non-unique
+  -o ./result_1
 
 # For more usage details, please see the usage file
 

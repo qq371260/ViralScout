@@ -21,6 +21,6 @@ bash VSFV.sh \
   -f contig_test.fa \
   -b benchmark_test.txt \
   -r sRNA_test.fastq \
-  -o ./result_1 \
+  -o ./result_1
 
 
