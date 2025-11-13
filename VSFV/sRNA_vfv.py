@@ -189,8 +189,6 @@ def main():
                         strand_name = 'plus' if strand == '+' else 'minus'
                         headers.append(f'{l}nt_{nt}_{strand_name}')
 
-        writer.writerow(headers)
-
         # Generate feature vectors for each reference and filter all-zero rows
         print("Generating feature vectors and filtering all-zero rows...")
         non_zero_rows = []
