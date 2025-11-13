@@ -12,11 +12,13 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy.cluster.hierarchy import linkage
 import warnings
-import matplotlib as mpl
 import argparse
 import os
 from scipy.spatial.distance import squareform
 import re
+import math
+import matplotlib.patches as patches
+from matplotlib import font_manager
 
 warnings.filterwarnings('ignore')
 import matplotlib.colors as mcolors
@@ -511,31 +513,74 @@ def main():
                   '#66BB6A', '#4CAF50', '#388E3C', '#2E7D32', '#1B5E20']
         cmap_custom = mcolors.LinearSegmentedColormap.from_list("custom_gray_green", colors, N=100)
 
+        # Set font to Times New Roman if available
+        font_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "times.ttf")
+        if os.path.exists(font_path):
+            font_manager.fontManager.addfont(font_path)
+            # Set global font to Times New Roman
+            plt.rcParams['font.family'] = 'serif'
+            plt.rcParams['font.serif'] = ['Times New Roman']
+            plt.rcParams['mathtext.fontset'] = 'stix'
+            print(f"Using Times New Roman font from: {font_path}")
+        else:
+            print("Times New Roman font file not found, using default font")
+
         # Plot clustered heatmap
         g = sns.clustermap(
-            normalized_data,
-            row_linkage=row_linkage,
-            col_cluster=False,
-            cmap=cmap_custom,
-            vmin=0,
-            vmax=0.1,
-            figsize=(fig_size_width, fig_size_height),
-            dendrogram_ratio=0.15,
-            cbar_pos=(0.02, 0.8, 0.03, 0.15),
-            yticklabels=False,
-            xticklabels=False,
-            cbar_kws={"label": ""}
+            normalized_data,  # Normalized feature matrix for clustering
+            row_linkage=row_linkage,  # Precomputed hierarchical clustering for rows
+            col_cluster=False,  # Disable column clustering (keep original order)
+            cmap=cmap_custom,  # Custom color map for heatmap visualization
+            vmin=0,  # Minimum value for color scale
+            vmax=0.1,  # Maximum value for color scale
+            figsize=(fig_size_width, fig_size_height),  # Dynamic figure dimensions
+            dendrogram_ratio=0.15,  # Proportion of figure dedicated to dendrogram
+            cbar_pos=(0.02, 0.8, 0.03, 0.15),  # Color bar position (left, bottom, width, height)
+            yticklabels=False,  # Disable default y-axis labels (add custom ones)
+            xticklabels=False,  # Disable default x-axis labels (add custom ones)
+            cbar_kws={"label": ""}  # Color bar settings (empty label)
         )
+
+        # Calculate dynamic font sizes
+        def calculate_optimal_fontsize(n_items, max_font=10, min_font=4):
+            """Calculate optimal font size based on number of items"""
+            import math
+            if n_items <= 10:
+                return max_font
+            elif n_items <= 50:
+                return max_font - (n_items - 10) * 0.1
+            else:
+                # For large datasets, use logarithmic scaling
+                return max(min_font, max_font - math.log(n_items) * 1.5)
+
+        y_fontsize = calculate_optimal_fontsize(len(available_rows))
+        x_fontsize = calculate_optimal_fontsize(len(numeric_cols))
+        print(f"Optimal font sizes - y: {y_fontsize:.1f}, x: {x_fontsize:.1f}")
+
+        # Set y-axis labels at the center of each row
+        if len(available_rows) > 0:
+            # Set ticks at the center of each row (0.5, 1.5, 2.5, ...)
+            y_ticks = [i + 0.5 for i in range(len(available_rows))]
+            g.ax_heatmap.set_yticks(y_ticks)
+            g.ax_heatmap.set_yticklabels(available_rows, fontsize=y_fontsize, va='center')
+
+        # Set x-axis labels at the center of each column
+        if len(numeric_cols) > 0:
+            # Set ticks at the center of each column (0.5, 1.5, 2.5, ...)
+            x_ticks = [i + 0.5 for i in range(len(numeric_cols))]
+            g.ax_heatmap.set_xticks(x_ticks)
+            g.ax_heatmap.set_xticklabels(numeric_cols, fontsize=x_fontsize, rotation=45, ha='center')
 
         # Get clustering order and draw enclosing rectangles for target rows
         reordered_indices = g.dendrogram_row.reordered_ind
         reordered_rows = [available_rows[i] for i in reordered_indices]
 
+        # Draw rectangles around target rows
         for i, row_name in enumerate(reordered_rows):
             if row_name in valid_target_rows:
-                # Add enclosing rectangle (adjusted to ensure all sides are fully displayed)
+                # Add enclosing rectangle - now using the center-aligned positions
                 rect = patches.Rectangle(
-                    (-0.01, i - 0.01),  # Bottom-left coordinates (slightly offset inward)
+                    (0, i),  # Bottom-left coordinates (start of row)
                     len(numeric_cols),  # Width = number of columns
                     1.0,  # Height = single row
                     linewidth=0.8,  # Border line width
