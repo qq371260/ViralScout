@@ -1,4 +1,9 @@
-cat > .gitattributes << 'EOF'
-# Ensure shell scripts use Unix line endings (LF) on all platforms
+# Shell scripts - Force Unix line endings
 *.sh text eol=lf
-EOF
+
+# Python scripts - Force Unix line endings  
+*.py text eol=lf
+
+# Configuration files - Unix line endings
+.gitignore text eol=lf
+.gitattributes text eol=lf
