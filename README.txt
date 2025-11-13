@@ -75,7 +75,7 @@ bash DVSA.sh \
   --negative sRNA-N_test.fastq \
   --benchmark benchmark_test.txt \
   --output ./result_1 \
-  --threads 32
+  --threads 2
 
 # Simply run for test files: paired reads
 bash DVSA.sh \
@@ -84,7 +84,7 @@ bash DVSA.sh \
   --negative RNA-N_test_R1.fastq,RNA-N_test_R2.fastq \
   --benchmark benchmark_test.txt \
   --output ./result_2 \
-  --threads 32
+  --threads 2
 
 # For more usage details, please see the usage file
 
