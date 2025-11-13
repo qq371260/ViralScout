@@ -375,6 +375,58 @@ def main():
     print(
         f"After threshold filtering (mean correlation>={args.mean_r}, p-value<{args.p_value}), retained {len(filtered_rows)} contigs")
 
+    # Quit if no contigs retained
+    if len(filtered_rows) == 0:
+        print("\n" + "=" * 60)
+        print("WARNING: No contigs passed the threshold filtering!")
+        print("=" * 60)
+        print(f"Analysis completed but no contigs met the criteria:")
+        print(f"  - Mean correlation threshold: {args.mean_r}")
+        print(f"  - P-value threshold: {args.p_value}")
+        print(f"  - Common highly correlated contigs found: {len(common_rows)}")
+        print(f"  - After filtering: 0 contigs")
+
+        if len(common_rows) > 0:
+            print(f"\nDebug information - Top 10 common contigs (before filtering):")
+            common_scores = [(row, scoring[row]['score'], scoring[row]['p_value'])
+                             for row in common_rows]
+            common_scores_sorted = sorted(common_scores, key=lambda x: x[1], reverse=True)[:10]
+            for i, (row, score, p_value) in enumerate(common_scores_sorted, 1):
+                print(f"  {i}. {row} (mean correlation: {score:.4f}, p-value: {p_value:.4e})")
+
+        try:
+            with open(f'{output_prefix}_analysis_summary.txt', 'w') as f:
+                f.write(f"{vector_mode} Spearman Correlation Analysis Summary\n")
+                f.write("=" * 50 + "\n")
+                f.write("WARNING: No contigs passed the threshold filtering!\n\n")
+                f.write("Filtering Criteria:\n")
+                f.write(f"  Mean correlation threshold: {args.mean_r}\n")
+                f.write(f"  P-value threshold: {args.p_value}\n\n")
+                f.write("Results:\n")
+                f.write(f"  Common highly correlated contigs found: {len(common_rows)}\n")
+                f.write(f"  Contigs after threshold filtering: 0\n\n")
+                f.write("Analysis Parameters:\n")
+                f.write(f"  Input file: {args.input}\n")
+                f.write(f"  Detected vector mode: {vector_mode}\n")
+                f.write(f"  Benchmark contigs: {len(target_rows)}\n")
+                f.write(f"  Valid benchmark contigs: {len(valid_target_rows)}\n")
+                f.write(f"  Specific contigs (K): {args.specific_contigs}\n")
+                f.write(f"  Common contigs (L): {args.common_contigs}\n")
+
+                if len(common_rows) > 0:
+                    f.write(f"\nTop 10 common contigs (before filtering):\n")
+                    for i, (row, score, p_value) in enumerate(common_scores_sorted, 1):
+                        f.write(f"  {i}. {row} (mean correlation: {score:.4f}, p-value: {p_value:.4e})\n")
+
+            print(f"Analysis summary saved as '{output_prefix}_analysis_summary.txt'")
+        except Exception as e:
+            print(f"Error saving analysis summary: {e}")
+
+        print("\nProgram terminated: No valid contigs found after filtering.")
+        return
+
+    print(f"Proceeding with {len(filtered_rows)} filtered contigs for clustering analysis...")
+
     # Extract filtered row names
     filtered_row_names = [row for row, score, p_value in filtered_rows]
 
