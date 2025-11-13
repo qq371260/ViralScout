@@ -191,7 +191,10 @@ def main():
 
         writer.writerow(headers)
 
-        # Generate feature vectors for each reference
+        # Generate feature vectors for each reference and filter all-zero rows
+        print("Generating feature vectors and filtering all-zero rows...")
+        non_zero_rows = []
+
         for ref_name in references:
             row = [ref_name]
 
@@ -231,7 +234,12 @@ def main():
                         for strand in strands:
                             count = merged_counts.get((ref_name, l, nt, strand), 0)
                             row.append(count)
-
+            if sum(row[1:]) > 0:
+                non_zero_rows.append(row)
+                
+        print(f"Writing {len(non_zero_rows)} non-zero rows to CSV (filtered out {len(references) - len(non_zero_rows)} all-zero rows)")
+        writer.writerow(headers)
+        for row in non_zero_rows:
             writer.writerow(row)
 
     print(f"Processing completed! Results saved to {args.output}")
