@@ -4,7 +4,7 @@
 # Viral small-RNA feature vector (VSFV) analysis
 # A method of ViralScout methodology
 # It uses variable-dimensional feature vectors counted from uniquely mapped sRNAs of each contig
-# Feature modes: size (length only), size_P_5nt (length + 5' nt), sizeXstr (length × strand), sizeX5nt (length × 5' nt), sizeX5ntXstr (length × 5' nt × strand)
+# Feature modes: size (length only), size_P_5nt (length + 5' nt), sizeXstr (length x strand), sizeX5nt (length x 5' nt), sizeX5ntXstr (length x 5' nt x strand)
 # Users can define any their pre-assembled contigs as viral benchmarks by providing names
 # Other contigs were compared with the benchmarks to find virus-like contigs
 # The comparison is based on pairwise correlation coefficients of feature vectors (Spearman or Pearson)
@@ -103,9 +103,9 @@ usage() {
     echo "  -m, --mode STR           Feature vector mode: size/size_P_5nt/sizeXstr/sizeX5nt/sizeX5ntXstr (default: sizeX5nt)"
     echo "                           size: length only"
     echo "                           size_P_5nt: length + 5' nucleotides" 
-    echo "                           sizeXstr: length × strands"
-    echo "                           sizeX5nt: length × 5' nucleotides"
-    echo "                           sizeX5ntXstr: length × 5' nucleotides × strands"
+    echo "                           sizeXstr: length x strands"
+    echo "                           sizeX5nt: length x 5' nucleotides"
+    echo "                           sizeX5ntXstr: length x 5' nucleotides x strands"
     echo ""
     echo "Correlation analysis options:"
     echo "  --pearson                Use Pearson correlation instead of Spearman (default: Spearman)"
