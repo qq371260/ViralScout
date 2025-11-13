@@ -444,12 +444,6 @@ def main():
     # Extract feature data for filtered rows
     feature_data = df.loc[available_rows, numeric_cols].copy()
 
-    print("Filtering rows with all zeros...")
-    non_zero_mask = (feature_data != 0).any(axis=1)
-    feature_data = feature_data[non_zero_mask]
-    available_rows = [available_rows[i] for i in range(len(available_rows)) if non_zero_mask.iloc[i]]
-    print(f"After filtering all-zero rows: {len(available_rows)} rows remaining")
-
     # Normalize each row (value/total, i.e., calculate proportion)
     print("Normalizing row data (calculating proportions)...")
     row_sums = feature_data.sum(axis=1)
