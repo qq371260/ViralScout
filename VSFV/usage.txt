@@ -1,0 +1,26 @@
+Please place all your files in the VSFV folder
+Usage:
+
+bash VSFV.sh \ -f contig_test.fa \ # Set your fasta file with unknown contigs
+  -r sRNA_test.fastq \ # Set your single virus-infected sequencing dataset
+  -b benchmark_test.txt \ # Benchmark contig name list; remove this line to use self-defined (data shape should be the same with the max. sRNA size minus min. sRNA size and plus one, e.g. 18-30 nt, require 13-dimensional data, please refer to vsiRNA_simulant_size_*.csv file) fictitious vsiRNA_simulant files
+  -o ./result_1 \ # Set your output folder
+  -m size_P_5nt \ # Set your sRNA feature vector dimension: size (n = max. sRNA size - min. sRNA size + 1), size_P_5nt (n + 3), sizeXstr (2n), sizeX5nt (4n), sizeX5ntXstr (8n) 
+  -n 10 \ # Set your threshold value to filter contigs with number of 21-nt sRNAs ≤ 10
+  --min-length 18 \ # Set your min. sRNA size
+  --max-length 30 \ # Set your max. sRNA size
+  --mean-r 0.8 \ # Set the mean correlation coefficient cutoff
+  --keep-non-unique \ # Use all mapped sRNAs in each contig instead of default uniquely mapped sRNAs
+  --pearson \ # Use Pearson correlation instead of default Spearman correlation
+  --force # Rerun to cover previous results in the same output folder instead of default continue
+
+For more information, please enter this command in a supported platform such as Ubuntu: bash unisRNA_vfv.sh -h
+Run using test files to check deployment:
+
+bash VSFV.sh \
+  -f contig_test.fa \
+  -b benchmark_test.txt \
+  -r sRNA_test.fastq \
+  -o ./result_1
+
+
