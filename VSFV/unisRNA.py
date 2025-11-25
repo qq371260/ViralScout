@@ -14,7 +14,7 @@ def main():
     parser = argparse.ArgumentParser(description="Filter BAM file to remove multi-mapped reads")
     parser.add_argument('-i', '--input_bam', required=True,
                         help="Path to the input BAM file")
-    parser.add_argument('-o', '--output_bam', default='unisRNA.csv',
+    parser.add_argument('-o', '--output_bam', default='unisRNA.bam',
                         help="Path to the output filtered BAM file")
     parser.add_argument('-c', '--cores', type=int, default=os.cpu_count(),
                         help=f"Number of CPU cores to use (default: {os.cpu_count()} - all available cores)")
