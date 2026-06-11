@@ -28,7 +28,7 @@ def parse_arguments():
                         help='File containing filtered contig names (txt or csv)')
     parser.add_argument('-b', '--benchmarks', type=str, default=None,
                         help='Benchmark contig txt or csv file path. If absent, use default vsiRNA simulant reference')
-    parser.add_argument('-c', '--cores', type=int, default=os.cpu_count(),
+    parser.add_argument('-t', '--threads', type=int, default=max(1, (os.cpu_count() or 1) - 1),
                         help='Number of CPU cores to use')
     parser.add_argument('--min_length', type=int, default=18,
                         help='Minimum sRNA size')
@@ -37,6 +37,8 @@ def parse_arguments():
     parser.add_argument('-m', '--mode',
                         choices=['size', 'size_P_5nt', 'sizeXstr', 'sizeX5nt', 'sizeX5ntXstr'], default='sizeX5nt',
                         help='Five feature vector modes')
+    parser.add_argument('--no_default_vsiRNA_simulant', action='store_true',
+                        help='Do not use default vsiRNA simulant even when no benchmarks are provided')
     return parser.parse_args()
 
 
@@ -47,7 +49,7 @@ def extract_first_word(text):
 
 def load_contig_list(contig_file):
     """Load contig names from file"""
-    print(f"Loading contig list from: {contig_file}")
+    print(f"\nLoading contig list from: {contig_file}")
 
     if contig_file.endswith('.csv'):
         df = pd.read_csv(contig_file)
@@ -72,11 +74,11 @@ def generate_column_headers(mode, min_length, max_length):
 
     if mode == 'size':
         for l in length_range:
-            headers.append(f'{l}nt')
+            headers.append(f'{l}-nt')
 
     elif mode == 'size_P_5nt':
         for l in length_range:
-            headers.append(f'{l}nt')
+            headers.append(f'{l}-nt')
         for nt in nucleotides:
             display_nt = 'U' if nt == 'T' else nt
             headers.append(display_nt)
@@ -85,13 +87,13 @@ def generate_column_headers(mode, min_length, max_length):
         for l in length_range:
             for strand in ['+', '-']:
                 strand_name = 'plus' if strand == '+' else 'minus'
-                headers.append(f'{l}nt_{strand_name}')
+                headers.append(f'{l}-nt_{strand_name}')
 
     elif mode == 'sizeX5nt':
         for l in length_range:
             for nt in nucleotides:
                 display_nt = 'U' if nt == 'T' else nt
-                headers.append(f'{l}nt_{display_nt}')
+                headers.append(f'{l}-nt_{display_nt}')
 
     elif mode == 'sizeX5ntXstr':
         for l in length_range:
@@ -99,7 +101,7 @@ def generate_column_headers(mode, min_length, max_length):
                 display_nt = 'U' if nt == 'T' else nt
                 for strand in ['+', '-']:
                     strand_name = 'plus' if strand == '+' else 'minus'
-                    headers.append(f'{l}nt_{display_nt}_{strand_name}')
+                    headers.append(f'{l}-nt_{display_nt}_{strand_name}')
 
     return headers
 
@@ -158,10 +160,16 @@ def adapt_external_vectors_to_length_range(external_vectors_df, mode, target_min
     return adapted_df
 
 
-def load_benchmarks(benchmarks_file, mode='sizeX5nt', target_min_length=18, target_max_length=30):
+def load_benchmarks(benchmarks_file, mode='sizeX5nt', target_min_length=18, target_max_length=30,
+                    no_default_vsiRNA_simulant=False):
     """Load benchmark contigs from file or use default vsiRNA simulant"""
 
     if benchmarks_file is None:
+        if no_default_vsiRNA_simulant:
+            # Do not use default vsiRNA simulant when --no_default_vsiRNA_simulant is specified
+            print("--no_default_vsiRNA_simulant specified: skipping default vsiRNA simulant")
+            return None, None
+
         # Use default vsiRNA simulant file
         default_filename = f"vsiRNA_simulant_{mode}.csv"
         possible_locations = [
@@ -330,9 +338,9 @@ def main():
         filtered_contigs = load_contig_list(args.filtered_contigs)
         bam_contigs.extend(filtered_contigs)
 
-    # Load benchmarks
+    # Load benchmarks with the no_default_vsiRNA_simulant flag
     benchmark_names, benchmark_vectors_df = load_benchmarks(
-        args.benchmarks, args.mode, args.min_length, args.max_length
+        args.benchmarks, args.mode, args.min_length, args.max_length, args.no_default_vsiRNA_simulant
     )
 
     if benchmark_vectors_df is not None:
@@ -397,7 +405,7 @@ def main():
     all_rows = []
     if target_references:
         # Split references into chunks for parallel processing
-        chunk_size = max(1, math.ceil(len(target_references) / args.cores))
+        chunk_size = max(1, math.ceil(len(target_references) / args.threads))
         args_list = [
             (target_references[i:i + chunk_size], args.input, args.min_length, args.max_length, args.mode)
             for i in range(0, len(target_references), chunk_size)
@@ -406,7 +414,7 @@ def main():
         print(f"Using {len(args_list)} processes for processing BAM contigs...")
 
         # Process chunks in parallel
-        with multiprocessing.Pool(processes=args.cores) as pool:
+        with multiprocessing.Pool(processes=args.threads) as pool:
             results = pool.map(process_chunk_optimized, args_list)
 
         # Merge results from all chunks
@@ -490,7 +498,7 @@ def main():
     print(f"Processing completed! Results saved to {args.output}")
     print(f"Final feature vector: {dimensions} dimensions")
     print(f"Feature combination: {args.mode}")
-    print(f"Length range: {args.min_length}-{args.max_length} nt")
+    print(f"Length range: {args.min_length}-{args.max_length} nt\n")
 
     if args.mode in ['sizeXstr', 'sizeX5ntXstr']:
         print(f"Note: Output contains both plus and minus strand versions for all contigs")

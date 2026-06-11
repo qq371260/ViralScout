@@ -41,7 +41,7 @@ def parse_arguments():
                         help='Output enhanced CSV file with contig metrics')
     parser.add_argument('--min-coverage', type=float, default=0.1,
                         help='Minimum coverage threshold for reporting')
-    parser.add_argument('--threads', type=int, default=1,
+    parser.add_argument('-t', '--threads', type=int, default=max(1, (os.cpu_count() or 1) - 1),
                         help='Number of threads for BAM processing')
     parser.add_argument('--coverage-bins', type=int, default=1000,
                         help='Number of bins for coverage calculation in large contigs')
@@ -459,7 +459,6 @@ def merge_metrics(filtered_df, size_gc_metrics, coverage_data, sRNA_data, correl
     enhanced_df['sRNA_22nt_Percent'] = sRNA_22nt_percents
     enhanced_df['sRNA_21_22nt_Percent'] = sRNA_21_22nt_percents
 
-    # 删除临时列
     if 'Processed_Name' in enhanced_df.columns:
         enhanced_df = enhanced_df.drop('Processed_Name', axis=1)
 
@@ -487,7 +486,6 @@ def generate_benchmarks_features(fasta_file, bam_file, benchmarks, min_coverage=
     logger.info("Generating feature metrics for benchmark contigs...")
 
     # Get size and GC content
-    # 为benchmarks创建一个临时的DataFrame结构
     benchmarks_df_temp = pd.DataFrame({'Contig_Name': benchmarks, 'Processed_Name': benchmarks})
     size_gc_metrics = get_contig_sizes_and_gc(fasta_file, benchmarks_df_temp)
 
@@ -623,7 +621,7 @@ def main():
         threads=args.threads
     )
 
-    # Step 6: Merge all metrics (使用原始名称)
+    # Step 6: Merge all metrics
     enhanced_df = merge_metrics(filtered_df, size_gc_metrics, coverage_data, sRNA_data, correlation_column)
 
     # Step 7: Auto-detect and process benchmarks file

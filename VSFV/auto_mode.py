@@ -2,7 +2,6 @@
 """
 Auto-select optimal benchmarks and vector mode based on correlation analysis
 Updated with improved strand processing using correlation-based selection
-and enhanced error handling for edge cases
 """
 
 import pandas as pd
@@ -25,14 +24,14 @@ def parse_arguments():
                         help='Benchmark contigs file (txt or csv)')
     parser.add_argument('--vector_dir', type=str, default='.',
                         help='Directory containing vector files (default: current directory)')
-    parser.add_argument('--output', type=str, default='optimal_benchmarks',
-                        help='Output prefix (default: optimal_benchmarks)')
+    parser.add_argument('--output', type=str, default='optimal',
+                        help='Output prefix (default: optimal)')
     parser.add_argument('--min_correlation', type=float, default=0.95,
                         help='Minimum correlation for benchmark selection')
     parser.add_argument('--min_correlation_mode', type=float, default=0.9,
                         help='Minimum correlation for mode selection')
-    parser.add_argument('--target_correlation', type=float, default=0.95,
-                        help='Target correlation for mode selection')
+    parser.add_argument('--convergence', type=str, default='high', choices=['high', 'low'],
+                        help='Convergence level: high (sizeX5nt, sizeX5ntXstr) or low (size, size_P_5nt, sizeXstr)')
     parser.add_argument('--p_value', type=float, default=0.05,
                         help='P-value threshold')
     return parser.parse_args()
@@ -46,7 +45,6 @@ def extract_first_word(text):
 
 def load_benchmarks(benchmarks_file):
     """Load benchmark contigs from file"""
-    print(f"Loading benchmark contigs from: {benchmarks_file}")
 
     if benchmarks_file.endswith('.csv'):
         df = pd.read_csv(benchmarks_file)
@@ -57,7 +55,6 @@ def load_benchmarks(benchmarks_file):
 
     # Extract first word
     benchmark_names = [extract_first_word(name) for name in benchmark_names]
-    print(f"Loaded {len(benchmark_names)} benchmark contigs")
     return benchmark_names
 
 
@@ -66,7 +63,6 @@ def load_vector_file(file_path, mode):
     if not os.path.exists(file_path):
         return None
 
-    print(f"Loading {mode} vectors from: {file_path}")
     df = pd.read_csv(file_path)
     df = df.set_index(df.columns[0])
     return df
@@ -231,7 +227,7 @@ def process_strand_vectors_correlation(df, selected_benchmarks, corr_method='pea
                 selected_strands.append(benchmark)
                 print(f"  Benchmark {i}: using original '{benchmark}' (fallback)")
 
-    print(f"  Selected {len(selected_strands)} benchmark strands")
+    print(f"  Selected {len(selected_strands)} benchmark strands\n")
 
     # Create new dataframe with only selected strands, renaming minus strands to base names
     new_index_map = {}
@@ -264,7 +260,7 @@ def process_strand_vectors_correlation(df, selected_benchmarks, corr_method='pea
 def select_optimal_benchmarks(size_df, benchmarks, min_correlation=0.95, p_value=0.05):
     """Select optimal benchmarks based on pairwise correlations"""
     print("\n" + "=" * 60)
-    print("Step 1: Selecting optimal benchmarks using size vectors")
+    print("Selecting optimal benchmarks using size vectors")
     print("=" * 60)
 
     # Calculate all pairwise correlations using both Pearson and Spearman
@@ -361,7 +357,7 @@ def select_optimal_benchmarks(size_df, benchmarks, min_correlation=0.95, p_value
     return selected_benchmarks
 
 
-def evaluate_vector_mode(df, selected_benchmarks, min_correlation=0.9, target_correlation=0.95, method='pearson'):
+def evaluate_vector_mode(df, selected_benchmarks, min_correlation=0.9, method='pearson'):
     """Evaluate vector mode based on benchmark correlations"""
     print(f"  Evaluating {len(selected_benchmarks)} benchmarks using {method.upper()} correlation...")
 
@@ -374,7 +370,13 @@ def evaluate_vector_mode(df, selected_benchmarks, min_correlation=0.9, target_co
 
     if not correlations:
         print(f"  No valid correlations found for this mode")
-        return None, None, False
+        return None, False
+
+    # Create dictionary
+    corr_dict = {}
+    for corr in correlations:
+        key = tuple(sorted([corr['contig1'], corr['contig2']]))
+        corr_dict[key] = corr['correlation']
 
     # Check if all pairs meet minimum correlation
     all_pairs_valid = True
@@ -382,67 +384,72 @@ def evaluate_vector_mode(df, selected_benchmarks, min_correlation=0.9, target_co
     min_corr = 1.0
 
     for contig1, contig2 in benchmark_pairs:
-        pair_found = False
-        for corr_data in correlations:
-            if (corr_data['contig1'] == contig1 and corr_data['contig2'] == contig2) or \
-                    (corr_data['contig1'] == contig2 and corr_data['contig2'] == contig1):
-                pair_found = True
-                corr_value = corr_data['correlation']
-                if corr_value < min_corr:
-                    min_corr = corr_value
-                if corr_value < min_correlation:
-                    all_pairs_valid = False
-                break
-        if not pair_found:
+        key = tuple(sorted([contig1, contig2]))
+        corr_value = corr_dict.get(key)
+
+        if corr_value is None:
+            all_pairs_valid = False
+            continue
+
+        if corr_value < min_corr:
+            min_corr = corr_value
+
+        if corr_value < min_correlation:
             all_pairs_valid = False
 
     if not all_pairs_valid:
         print(f"  Not all benchmark pairs meet minimum correlation ({min_correlation})")
         print(f"  Minimum correlation found: {min_corr:.4f}")
-        return None, None, False
+        return None, False
 
     # Calculate average correlation
     avg_correlation = np.mean([corr['correlation'] for corr in correlations])
 
-    # Calculate distance from target correlation
-    distance_from_target = abs(avg_correlation - target_correlation)
-
-    print(f"  All pairs valid: ✓")
+    print(f"  All pairs validated")
     print(f"  Minimum correlation found: {min_corr:.4f}")
     print(f"  Average correlation: {avg_correlation:.4f}")
-    print(f"  Distance from target ({target_correlation}): {distance_from_target:.4f}")
 
-    return avg_correlation, distance_from_target, True
+    return avg_correlation, True
 
 
-def select_optimal_mode(vector_files, selected_benchmarks, min_correlation=0.9, target_correlation=0.95):
+def select_optimal_mode(vector_files, selected_benchmarks, min_correlation=0.9, convergence='high'):
     """Select optimal vector mode and correlation method based on benchmark correlations"""
     print("\n" + "=" * 60)
-    print("Step 2: Selecting optimal vector mode and correlation method")
+    print("Selecting optimal vector mode and correlation method")
+    print(f"Convergence setting: {convergence}")
     print("=" * 60)
+    
+    # Define mode sets based on convergence level
+    if convergence == 'low':
+        mode_sets = ['size', 'size_P_5nt', 'sizeXstr']
+        print("  Mode selection set: size, size_P_5nt, sizeXstr (low convergence)")
+    else:  # high
+        mode_sets = ['sizeX5nt', 'sizeX5ntXstr']
+        print("  Mode selection set: sizeX5nt, sizeX5ntXstr (high convergence)")
 
     # Handle single benchmark case
     if len(selected_benchmarks) < 2:
         print(f"Warning: Only {len(selected_benchmarks)} benchmark(s) selected.")
         print("Cannot perform correlation-based mode selection with less than 2 benchmarks.")
-        print("Using default: size mode with Pearson correlation")
+        print(f"Using default from {convergence} convergence set...")
 
-        # Verify size mode file exists
-        if os.path.exists(vector_files['size']):
+        # Select default mode based on convergence setting
+        if convergence == 'low':
+            print(f"  Fallback: Using size mode with Pearson correlation (default for low divergence)")
             return 'size', 'pearson'
         else:
-            # If size mode doesn't exist, try other modes
-            for mode, file_path in vector_files.items():
-                if os.path.exists(file_path):
-                    print(f"Fallback: Using {mode} mode with Pearson correlation")
-                    return mode, 'pearson'
-            print("Error: No vector files found!")
-            return None, None
+            print(f"  Fallback: Using sizeX5nt mode with Spearman correlation (default for high divergence)")
+            return 'sizeX5nt', 'spearman'
 
     all_results = []
 
-    # Evaluate all 8 combinations: 4 modes × 2 correlation methods
-    for mode, file_path in vector_files.items():
+    # Evaluate only the modes in the selected convergence set
+    for mode in mode_sets:
+        file_path = vector_files.get(mode)
+        if not file_path:
+            print(f"  Warning: {mode} not found in vector files dictionary")
+            continue
+
         print(f"\nEvaluating {mode} mode...")
 
         df = load_vector_file(file_path, mode)
@@ -450,9 +457,9 @@ def select_optimal_mode(vector_files, selected_benchmarks, min_correlation=0.9, 
             print(f"  Vector file not found: {file_path}")
             continue
 
-        # Process strand vectors for strand-specific modes using correlation-based method
+        # Process strand vectors for strand-specific modes
         if mode in ['sizeXstr', 'sizeX5ntXstr']:
-            print(f"  Processing strand information using correlation-based selection...")
+            print(f"  Select best strand using Spearman correlation-based selection...")
             # Use Pearson for strand selection since we're comparing with first benchmark
             df = process_strand_vectors_correlation(df, selected_benchmarks, corr_method='spearman')
 
@@ -461,8 +468,8 @@ def select_optimal_mode(vector_files, selected_benchmarks, min_correlation=0.9, 
             print(f"  Testing {method.upper()} correlation...")
 
             # Evaluate the mode with this correlation method
-            avg_corr, distance, valid = evaluate_vector_mode(
-                df, selected_benchmarks, min_correlation, target_correlation, method
+            avg_corr, valid = evaluate_vector_mode(
+                df, selected_benchmarks, min_correlation, method
             )
 
             if valid:
@@ -470,54 +477,73 @@ def select_optimal_mode(vector_files, selected_benchmarks, min_correlation=0.9, 
                     'mode': mode,
                     'method': method,
                     'avg_correlation': avg_corr,
-                    'distance_from_target': distance,
                     'valid': True
                 })
+
+    best_mode = None
+    best_method = None
+    best_combination = None
+    best_avg_corr = None
 
     # Select best combination
     if not all_results:
         print(f"\nNo valid vector mode and correlation method combinations found!")
-        print("Falling back to default mode...")
+        print(f"Falling back to default mode (size × Pearson) from {convergence} set...")
 
-        # Try size mode first
-        if os.path.exists(vector_files['size']):
-            best_mode = 'size'
-            best_method = 'pearson'
-            print(f"\nFALLBACK: Using size mode with Pearson correlation")
+        # Try modes in the convergence set first
+        if convergence == 'low':
+            default_method = 'pearson'
+            fallback_modes = ['size']
         else:
-            # If size mode doesn't exist, try other available modes
-            for mode, file_path in vector_files.items():
-                if os.path.exists(file_path):
-                    best_mode = mode
-                    best_method = 'pearson'
-                    print(f"\nFALLBACK: Using {mode} mode with Pearson correlation")
-                    break
+            default_method = 'pearson'
+            fallback_modes = ['size']
+
+        for mode in fallback_modes:
+            file_path = vector_files.get(mode)
+            if file_path and os.path.exists(file_path):
+                best_mode = mode
+                best_method = default_method
+                print(f"\nFALLBACK: Using {mode} mode with {default_method.upper()} correlation")
+                break
+        else:
+            # If none mode works
+            if os.path.exists(vector_files.get('size', '')):
+                best_mode = 'size'
+                best_method = 'pearson'
+                print(f"\nFALLBACK: Using size mode with {default_method.upper()} correlation (default)")
             else:
-                print(f"\nERROR: No vector files found for fallback!")
-                return None, None
+                # Using any mode
+                for mode, file_path in vector_files.items():
+                    if os.path.exists(file_path):
+                        best_mode = mode
+                        best_method = default_method
+                        print(f"\nFALLBACK: Using {mode} mode with {default_method.upper()} correlation")
+                        break
+                else:
+                    print(f"\nERROR: No vector files found for fallback!")
+                    return None, None
     else:
-        # Select combination with distance closest to 0 (closest to target correlation)
-        best_combination = min(all_results, key=lambda x: x['distance_from_target'])
+        # Select combination with highest average correlation
+        best_combination = max(all_results, key=lambda x: x['avg_correlation'])
         best_mode = best_combination['mode']
         best_method = best_combination['method']
-        best_distance = best_combination['distance_from_target']
+        best_avg_corr = best_combination['avg_correlation']
 
     print(f"\n" + "=" * 40)
-    print("OPTIMAL COMBINATION SELECTED:")
+    print("Optimal mode and correlation selected")
     print("=" * 40)
     print(f"Vector Mode: {best_mode}")
     print(f"Correlation Method: {best_method.upper()}")
-    if best_mode != 'size' or best_method != 'pearson':  # Only show correlation if not fallback
-        print(f"Average correlation: {best_combination.get('avg_correlation', 'N/A'):.4f}")
-        print(f"Distance from target ({target_correlation}): {best_distance:.4f}")
+    if best_avg_corr is not None:
+        print(f"Average correlation: {best_avg_corr:.4f}")
 
     # Print all combinations rankings (only if we have results)
     if all_results:
-        print(f"\nAll combinations rankings (by distance from target):")
-        sorted_combinations = sorted(all_results, key=lambda x: x['distance_from_target'])
+        print(f"\nAll combinations rankings (by average correlation):")
+        sorted_combinations = sorted(all_results, key=lambda x: x['avg_correlation'], reverse=True)
         for i, combo in enumerate(sorted_combinations, 1):
             print(f"  {i}. {combo['mode']} + {combo['method'].upper()}: "
-                  f"avg_corr={combo['avg_correlation']:.4f}, distance={combo['distance_from_target']:.4f}")
+                  f"avg_corr={combo['avg_correlation']:.4f}")
 
     return best_mode, best_method
 
@@ -560,15 +586,16 @@ def main():
     best_mode, best_method = select_optimal_mode(
         vector_files, selected_benchmarks,
         min_correlation=args.min_correlation_mode,
-        target_correlation=args.target_correlation
+        convergence=args.convergence
     )
 
     # Save mode selection results
     if best_mode:
-        mode_output_file = f"{args.output}_optimal_mode.txt"
+        mode_output_file = f"{args.output}_mode.txt"
         with open(mode_output_file, 'w') as f:
             f.write(f"OPTIMAL_VECTOR_MODE: {best_mode}\n")
             f.write(f"OPTIMAL_CORRELATION_METHOD: {best_method}\n")
+            f.write(f"CONVERGENCE_SETTING: {args.convergence}\n")
             f.write(f"SELECTED_BENCHMARKS: {len(selected_benchmarks)}\n")
             f.write(f"BENCHMARK_FILE: {output_file}\n")
         print(f"\nOptimal combination information saved to: {mode_output_file}")

@@ -14,9 +14,9 @@ def main():
     parser = argparse.ArgumentParser(description="Filter BAM file to remove multi-mapped reads")
     parser.add_argument('-i', '--input_bam', required=True,
                         help="Path to the input BAM file")
-    parser.add_argument('-o', '--output_bam', default='unisRNA.csv',
+    parser.add_argument('-o', '--output_bam', default='unisRNA.bam',
                         help="Path to the output filtered BAM file")
-    parser.add_argument('-c', '--cores', type=int, default=os.cpu_count(),
+    parser.add_argument('-t', '--threads', type=int, default=max(1, (os.cpu_count() or 1) - 1),
                         help=f"Number of CPU cores to use (default: {os.cpu_count()} - all available cores)")
     args = parser.parse_args()
 
@@ -27,9 +27,9 @@ def main():
 
     try:
         # Open the input BAM file with multi-threading support using context manager
-        with pysam.AlignmentFile(args.input_bam, "rb", threads=args.cores) as samfile:
+        with pysam.AlignmentFile(args.input_bam, "rb", threads=args.threads) as samfile:
             # Open the output BAM file with the same header
-            with pysam.AlignmentFile(args.output_bam, "wb", header=samfile.header, threads=args.cores) as output:
+            with pysam.AlignmentFile(args.output_bam, "wb", header=samfile.header, threads=args.threads) as output:
 
                 # Create a set to track reads with secondary alignments
                 marked_reads = set()

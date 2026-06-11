@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Filter contigs using correlation analysis of sRNA size or size plus 5'-nt vector
+Filter contigs using Pearson correlation of sRNA size or Spearman of sRNA size plus 5'-nt vector
 """
 
 import pysam
@@ -28,23 +28,22 @@ def parse_arguments():
                         help='Input BAM file path')
     parser.add_argument('-b', '--benchmarks', type=str, default=None,
                         help='Benchmark contig txt or csv file path. If absent, use default vsiRNA simulant reference')
-    parser.add_argument('--correlation_method', type=str, default='spearman',
-                        choices=['spearman', 'pearson'],
-                        help='Correlation method: spearman or pearson (default: spearman)')
     parser.add_argument('-o', '--output', type=str, default='correlation_results',
                         help='Output file prefix (default: correlation_results)')
     parser.add_argument('--min_length', type=int, default=18,
                         help='Minimum sRNA size')
     parser.add_argument('--max_length', type=int, default=30,
                         help='Maximum sRNA size')
-    parser.add_argument('--threads', type=int, default=-1,
+    parser.add_argument('-t', '--threads', type=int, default=max(1, (os.cpu_count() or 1) - 1),
                         help='Number of parallel threads for all processing steps (default to use all CPU cores)')
     parser.add_argument('--mean_r', type=float, default=0.8,
                         help='Mean correlation threshold')
     parser.add_argument('--p_value', type=float, default=0.05,
                         help='P-value threshold')
-    parser.add_argument('-n', '--number_21_nt', type=int, default=10,
-                        help='21nt threshold for filtering')
+    parser.add_argument('--filter_nt', type=int, default=21,
+                        help='sRNA size for filtering (default: 21)')
+    parser.add_argument('--filter_nt_number', type=int, default=10,
+                        help='Threshold count for the specified sRNA size for filtering (default: 10)')
     parser.add_argument('-m', '--mode', type=str, default='sizeX5nt',
                         choices=['size', 'size_P_5nt', 'sizeXstr', 'sizeX5nt', 'sizeX5ntXstr'],
                         help='Five feature vector modes: size, size_P_5nt, sizeXstr, sizeX5nt, sizeX5ntXstr')
@@ -52,11 +51,11 @@ def parse_arguments():
 
 
 def get_analysis_mode(mode):
-    """Map the 5 input modes to 2 analysis modes"""
+    """Map the 5 input modes to 2 analysis modes and correlation methods"""
     if mode in ['size', 'sizeXstr']:
-        return 'size'
+        return 'size', 'pearson'
     elif mode in ['size_P_5nt', 'sizeX5nt', 'sizeX5ntXstr']:
-        return 'size_P_5nt'
+        return 'size_P_5nt', 'spearman'
     else:
         raise ValueError(f"Unknown mode: {mode}")
 
@@ -119,15 +118,13 @@ def generate_feature_vectors(bam_file, output_csv, min_length=18, max_length=30,
     """Generate feature vector data from BAM file in specified mode"""
 
     # Map input mode to analysis mode
-    analysis_mode = get_analysis_mode(mode)
+    analysis_mode, _ = get_analysis_mode(mode)
 
-    if threads == -1:
-        threads = os.cpu_count()
-    elif threads is None:
+    if threads == -1 or threads is None:
         threads = os.cpu_count()
 
     print("=" * 60)
-    print(f"Step 1: Generating feature vector data")
+    print(f"Generating feature vector data")
     print(f"Input mode: {mode}")
     print(f"Analysis mode: {analysis_mode}")
     print("=" * 60)
@@ -187,15 +184,15 @@ def generate_feature_vectors(bam_file, output_csv, min_length=18, max_length=30,
     with open(output_csv, 'w', newline='') as csvfile:
         writer = csv.writer(csvfile)
 
-        # Create header based on analysis mode
+        # Create header based on analysis mode (now using -nt format)
         headers = ['Reference']
 
         if analysis_mode == 'size':
             for l in length_range:
-                headers.append(f'{l}nt')
+                headers.append(f'{l}-nt')
         elif analysis_mode == 'size_P_5nt':
             for l in length_range:
-                headers.append(f'{l}nt')
+                headers.append(f'{l}-nt')
             for nt in nucleotides:
                 headers.append(nt)
 
@@ -246,7 +243,7 @@ def load_benchmarks(benchmarks_file, mode='sizeX5nt', min_length=18, max_length=
     """Load benchmark contigs from file or use default vsiRNA simulants for specified mode"""
 
     # Map input mode to analysis mode
-    analysis_mode = get_analysis_mode(mode)
+    analysis_mode, _ = get_analysis_mode(mode)
 
     if benchmarks_file is None:
         # Determine default filename based on analysis mode
@@ -266,8 +263,13 @@ def load_benchmarks(benchmarks_file, mode='sizeX5nt', min_length=18, max_length=
                 print(f"Using default vsiRNA simulant file: {ref_file}")
                 ref_df = pd.read_csv(ref_file, header=0)
 
-                # Check if we need to adjust the length range
-                current_lengths = [int(col[:-2]) for col in ref_df.columns if col.endswith('nt')]
+                # Extract length numbers from column names (supports both 18nt and 18-nt)
+                def extract_length(col):
+                    match = re.search(r'(\d+)', col)
+                    return int(match.group(1)) if match else None
+
+                current_lengths = [extract_length(col) for col in ref_df.columns if col.endswith('nt')]
+                current_lengths = [l for l in current_lengths if l is not None]
                 current_min = min(current_lengths) if current_lengths else 18
                 current_max = max(current_lengths) if current_lengths else 30
 
@@ -307,7 +309,7 @@ def adjust_reference_length_range(ref_df, target_min, target_max, current_min, c
     """Adjust reference dataframe to match target length range by adding columns with zeros"""
 
     # Map input mode to analysis mode
-    analysis_mode = get_analysis_mode(mode)
+    analysis_mode, _ = get_analysis_mode(mode)
 
     # Get non-length columns based on analysis mode
     if analysis_mode == 'size':
@@ -317,9 +319,8 @@ def adjust_reference_length_range(ref_df, target_min, target_max, current_min, c
     else:
         non_length_cols = []
 
-    # Create new length columns for the target range
+    # Create new length columns for the target range (using -nt format)
     target_lengths = range(target_min, target_max + 1)
-    current_lengths = range(current_min, current_max + 1)
 
     # Create new columns list
     new_columns = ['Reference']
@@ -327,11 +328,11 @@ def adjust_reference_length_range(ref_df, target_min, target_max, current_min, c
     # Add length columns for target range based on analysis mode
     if analysis_mode == 'size':
         for length in target_lengths:
-            col_name = f'{length}nt'
+            col_name = f'{length}-nt'
             new_columns.append(col_name)
     elif analysis_mode == 'size_P_5nt':
         for length in target_lengths:
-            col_name = f'{length}nt'
+            col_name = f'{length}-nt'
             new_columns.append(col_name)
         new_columns.extend(non_length_cols)
 
@@ -343,14 +344,14 @@ def adjust_reference_length_range(ref_df, target_min, target_max, current_min, c
 
         if analysis_mode == 'size':
             for length in target_lengths:
-                col_name = f'{length}nt'
+                col_name = f'{length}-nt'
                 if col_name in ref_df.columns:
                     new_row.append(row[col_name])
                 else:
                     new_row.append(0)
         elif analysis_mode == 'size_P_5nt':
             for length in target_lengths:
-                col_name = f'{length}nt'
+                col_name = f'{length}-nt'
                 if col_name in ref_df.columns:
                     new_row.append(row[col_name])
                 else:
@@ -411,9 +412,9 @@ def get_top_k_with_p_value(target_row, k, df, numeric_cols, corr_method='spearma
     return [(row, correlations[row], p_values[row]) for row, _ in sorted_rows]
 
 
-def filter_by_21nt_threshold(df, number_21_nt, benchmark_set=None):
-    """Filter dataframe based on 21nt total threshold, but always keep benchmark contigs"""
-    print(f"Checking and filtering by 21nt threshold: {number_21_nt}")
+def filter_by_nt_threshold(df, filter_nt, filter_nt_number, benchmark_set=None):
+    """Filter dataframe based on specified sRNA size count threshold, but always keep benchmark contigs"""
+    print(f"Checking and filtering by {filter_nt}nt threshold: {filter_nt_number}")
 
     # If no benchmark set provided, create empty set
     if benchmark_set is None:
@@ -421,58 +422,68 @@ def filter_by_21nt_threshold(df, number_21_nt, benchmark_set=None):
 
     print(f"Preserving {len(benchmark_set)} benchmark contigs from filtering")
 
-    # Check if 21nt column exists
-    if '21nt' in df.columns:
-        # Directly use 21nt column for filtering
-        initial_count = len(df)
+    # Work on a copy to avoid modifying the original DataFrame
+    df_work = df.copy()
 
-        # Create filter condition: keep if 21nt >= threshold OR if it's a benchmark contig
-        condition = (df['21nt'] >= number_21_nt) | (df.index.isin(benchmark_set))
-        df_filtered = df[condition]
+    # Check if specified nt column exists (now using -nt format)
+    nt_col_name = f'{filter_nt}-nt'
+    if nt_col_name in df_work.columns:
+        # Directly use the specified nt column for filtering
+        initial_count = len(df_work)
+
+        # Create filter condition: keep if count >= threshold OR if it's a benchmark contig
+        condition = (df_work[nt_col_name] >= filter_nt_number) | (df_work.index.isin(benchmark_set))
+        df_filtered = df_work[condition]
 
         filtered_count = len(df_filtered)
         benchmark_preserved = sum(df_filtered.index.isin(benchmark_set))
 
-        print(f"Filtered by 21nt threshold {number_21_nt}: {initial_count} -> {filtered_count} rows")
+        print(f"Filtered by {filter_nt}nt threshold {filter_nt_number}: {initial_count} -> {filtered_count} rows")
         print(f"Preserved {benchmark_preserved} benchmark contigs")
         return df_filtered
     else:
-        # Check for 21nt-related columns
-        twentyone_nt_cols = [col for col in df.columns if '21' in str(col)]
-        if len(twentyone_nt_cols) > 0:
-            print(f"Found 21nt-related columns: {twentyone_nt_cols}")
-            # Calculate sum of 21nt-related columns
-            df['21nt_total'] = df[twentyone_nt_cols].sum(axis=1)
-            initial_count = len(df)
+        # Check for columns containing the specified nt length (may have -nt or other variations)
+        nt_cols = [col for col in df_work.columns if str(filter_nt) in str(col) and 'nt' in str(col)]
+        if len(nt_cols) > 0:
+            print(f"Found {filter_nt}nt-related columns: {nt_cols}")
+            # Calculate sum of related columns (using a temporary column with -nt format)
+            temp_col = f'{filter_nt}-nt_total'
+            df_work[temp_col] = df_work[nt_cols].sum(axis=1)
+            initial_count = len(df_work)
 
-            # Create filter condition: keep if 21nt_total >= threshold OR if it's a benchmark contig
-            condition = (df['21nt_total'] >= number_21_nt) | (df.index.isin(benchmark_set))
-            df_filtered = df[condition]
+            # Create filter condition: keep if total count >= threshold OR if it's a benchmark contig
+            condition = (df_work[temp_col] >= filter_nt_number) | (df_work.index.isin(benchmark_set))
+            df_filtered = df_work[condition]
 
             filtered_count = len(df_filtered)
             benchmark_preserved = sum(df_filtered.index.isin(benchmark_set))
 
-            print(f"Filtered by 21nt total threshold {number_21_nt}: {initial_count} -> {filtered_count} rows")
+            print(f"Filtered by {filter_nt}nt total threshold {filter_nt_number}: {initial_count} -> {filtered_count} rows")
             print(f"Preserved {benchmark_preserved} benchmark contigs")
+
+            # Delete temporary total column
+            df_filtered = df_filtered.drop(columns=[temp_col])
             return df_filtered
         else:
-            print(f"Warning: No 21nt column found, skipping 21nt filtering")
-            return df
+            print(f"Warning: No {filter_nt}nt column found, skipping {filter_nt}nt filtering")
+            return df_work
 
 
 def find_highly_correlated_contigs(vector_csv, benchmarks_file, output_prefix,
-                                   mean_r=0.8, p_value=0.05, number_21_nt=10,
-                                   threads=-1, mode='sizeX5nt', min_length=18, max_length=30,
-                                   correlation_method='spearman'):
+                                   mean_r=0.8, p_value=0.05, filter_nt=21,
+                                   filter_nt_number=10, threads=-1, mode='sizeX5nt',
+                                   min_length=18, max_length=30):
     """Find highly correlated contigs using selected correlation method"""
 
     # Map input mode to analysis mode
-    analysis_mode = get_analysis_mode(mode)
+    analysis_mode, correlation_method = get_analysis_mode(mode)
 
     print("\n" + "=" * 60)
-    print(f"Step 2: Finding highly correlated contigs using {correlation_method} correlation")
+    print(f"Finding highly correlated contigs using {correlation_method} correlation")
     print(f"Input mode: {mode}")
     print(f"Analysis mode: {analysis_mode}")
+    print(f"Correlation method: {correlation_method}")
+    print(f"Filtering by {filter_nt}nt with threshold {filter_nt_number}")
     print("=" * 60)
 
     # Set fixed parameters
@@ -523,8 +534,8 @@ def find_highly_correlated_contigs(vector_csv, benchmarks_file, output_prefix,
         print("Error: No valid benchmark contigs found in the vector data")
         return
 
-    # Filter by 21nt threshold, but preserve benchmark contigs
-    df = filter_by_21nt_threshold(df, number_21_nt, benchmark_set)
+    # Filter by specified nt threshold, but preserve benchmark contigs
+    df = filter_by_nt_threshold(df, filter_nt, filter_nt_number, benchmark_set)
 
     # Check if benchmark contigs are still present after filtering
     remaining_benchmarks = [row for row in valid_target_rows if row in df.index]
@@ -650,12 +661,12 @@ def main():
         output_prefix=args.output,
         mean_r=args.mean_r,
         p_value=args.p_value,
-        number_21_nt=args.number_21_nt,
+        filter_nt=args.filter_nt,
+        filter_nt_number=args.filter_nt_number,
         threads=args.threads,
         mode=args.mode,
         min_length=args.min_length,
-        max_length=args.max_length,
-        correlation_method=args.correlation_method
+        max_length=args.max_length
     )
 
     print("\n" + "=" * 60)

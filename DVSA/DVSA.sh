@@ -2,7 +2,7 @@
 
 # ===================================================================================
 # Differential viral segment abundence analysis (DVSA) pipeline for RNA- or sRNA-seq
-# Methods of ViralScout methodology
+# A method of ViralScout methodology
 # Users can define any their pre-assembled contigs as viral benchmarks by providing names
 # Caculate the Euclidean distance (TRM, FC) between unknown contigs with the centroid of viral benchmarks
 # Please put all needed files in current directory
@@ -123,20 +123,22 @@ usage() {
     echo "  --contigs FILE          Reference contigs fasta file"
     echo "  --positive FILE         Positive sample fastq file(s)"
     echo "  --negative FILE         Negative sample fastq file(s)"
-    echo "  --benchmark FILE        Benchmark contigs file"
     echo "  --output DIR            Output directory"
+    echo ""
+    echo "Optional parameters:"
+    echo "  --benchmark FILE        Benchmark contigs file (optional, for distance calculation)"
     echo ""
     echo "For paired-end reads, use:"
     echo "  --positive FILE1,FILE2  Comma-separated R1 and R2 files"
     echo "  --negative FILE1,FILE2  Comma-separated R1 and R2 files"
     echo ""
     echo "Performance options:"
-    echo "  --threads INT           Number of threads (default: 32)"
     echo "  --bowtie2-threads INT   Threads for bowtie2 (default: 32)"
     echo "  --samtools-threads INT  Threads for samtools (default: 32)"
     echo ""
     echo "Analysis options:"
     echo "  --nearest-percent FLOAT Percentage of nearest contigs to select (default: 0.1)"
+    echo "                           Only used when --benchmark is provided"
     echo ""
     echo "Other options:"
     echo "  --force                 Force rerun from beginning"
@@ -149,7 +151,6 @@ POSITIVE_READS=""
 NEGATIVE_READS=""
 BENCHMARK_FILE=""
 OUTPUT_DIR=""
-THREADS=32
 BOWTIE2_THREADS=32
 SAMTOOLS_THREADS=32
 NEAREST_PERCENT=0.1
@@ -166,7 +167,6 @@ while [[ $# -gt 0 ]]; do
         --output) OUTPUT_DIR="$2"; shift 2 ;;
         
         # Performance options
-        --threads) THREADS="$2"; shift 2 ;;
         --bowtie2-threads) BOWTIE2_THREADS="$2"; shift 2 ;;
         --samtools-threads) SAMTOOLS_THREADS="$2"; shift 2 ;;
         
@@ -181,7 +181,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ---------- Check required inputs ----------
-if [[ -z "$CONTIGS_FILE" || -z "$POSITIVE_READS" || -z "$NEGATIVE_READS" || -z "$BENCHMARK_FILE" || -z "$OUTPUT_DIR" ]]; then
+if [[ -z "$CONTIGS_FILE" || -z "$POSITIVE_READS" || -z "$NEGATIVE_READS" || -z "$OUTPUT_DIR" ]]; then
     log_error "Missing required parameters"
     usage
     exit 1
@@ -198,7 +198,9 @@ convert_to_absolute_path() {
 }
 
 CONTIGS_FILE=$(convert_to_absolute_path "$CONTIGS_FILE")
-BENCHMARK_FILE=$(convert_to_absolute_path "$BENCHMARK_FILE")
+if [[ -n "$BENCHMARK_FILE" ]]; then
+    BENCHMARK_FILE=$(convert_to_absolute_path "$BENCHMARK_FILE")
+fi
 
 # Process FASTQ file
 convert_comma_separated_paths() {
@@ -224,7 +226,12 @@ NEGATIVE_READS=$(convert_comma_separated_paths "$NEGATIVE_READS")
 # ---------- Check if input files exist ----------
 log_step "Checking input files"
 check_file "$CONTIGS_FILE" "Contigs file"
-check_file "$BENCHMARK_FILE" "Benchmark file"
+
+if [[ -n "$BENCHMARK_FILE" ]]; then
+    check_file "$BENCHMARK_FILE" "Benchmark file"
+else
+    log_info "No benchmark file provided, distance calculation will be skipped"
+fi
 
 # Detect FASTQ file
 if [[ "$POSITIVE_READS" == *","* ]]; then
@@ -257,10 +264,11 @@ log_step "Starting Seq Analysis Pipeline"
 log_info "Contigs file: $CONTIGS_FILE"
 log_info "Positive reads: $POSITIVE_READS"
 log_info "Negative reads: $NEGATIVE_READS"
-log_info "Benchmark file: $BENCHMARK_FILE"
+log_info "Benchmark file: ${BENCHMARK_FILE:-Not provided}"
 log_info "Output directory: $OUTPUT_DIR"
-log_info "Threads: $THREADS"
-log_info "Nearest contigs percentage: ${NEAREST_PERCENT}%"
+if [[ -n "$BENCHMARK_FILE" ]]; then
+    log_info "Nearest contigs percentage: ${NEAREST_PERCENT}%"
+fi
 log_info "Force rerun: $FORCE_RERUN"
 
 # ---------- Detect read type ----------
@@ -396,7 +404,15 @@ log_step "Step 6: Running seq differential expression analysis"
 
 ANALYSIS_OUTPUT="seq_analysis"
 
-run_command "python3 ../DVSAanalyzer.py --positive_bam '$POSITIVE_SORTED_BAM' --negative_bam '$NEGATIVE_SORTED_BAM' --contig_lengths '$CONTIG_LENGTHS' --benchmark_contigs '$BENCHMARK_FILE' --output '$ANALYSIS_OUTPUT' --nearest_percent '$NEAREST_PERCENT'" "seq analysis" 
+# Build the command for DVSAanalyzer.py
+PYTHON_CMD="python3 ../DVSAanalyzer.py --positive_bam '$POSITIVE_SORTED_BAM' --negative_bam '$NEGATIVE_SORTED_BAM' --contig_lengths '$CONTIG_LENGTHS' --output '$ANALYSIS_OUTPUT'"
+
+# Add benchmark if provided
+if [[ -n "$BENCHMARK_FILE" ]]; then
+    PYTHON_CMD="$PYTHON_CMD --benchmark_contigs '$BENCHMARK_FILE' --nearest_percent '$NEAREST_PERCENT'"
+fi
+
+run_command "$PYTHON_CMD" "seq analysis"
 
 # ---------- Final summary ----------
 log_step "Pipeline completion report"
@@ -408,10 +424,11 @@ echo "    - $POSITIVE_SORTED_BAM"
 echo "    - $NEGATIVE_SORTED_BAM"
 echo "  - Analysis results:"
 echo "    - ${ANALYSIS_OUTPUT}_seq_data.csv"
-echo "    - ${ANALYSIS_OUTPUT}_with_distances.csv"
-echo "    - ${ANALYSIS_OUTPUT}_nearest_contigs.csv"
+
+if [[ -n "$BENCHMARK_FILE" ]]; then
+    echo "    - ${ANALYSIS_OUTPUT}_with_distances.csv"
+    echo "    - ${ANALYSIS_OUTPUT}_nearest_contigs.csv"
+fi
+
 echo "    - ${ANALYSIS_OUTPUT}_feature_space.svg"
 echo "  - Log file: $LOG_FILE"
-echo ""
-echo "To rerun the analysis, use:"
-echo "  $0 --contigs '$CONTIGS_FILE' --positive '$POSITIVE_READS' --negative '$NEGATIVE_READS' --benchmark '$BENCHMARK_FILE' --output '$OUTPUT_DIR' --threads $THREADS --nearest-percent $NEAREST_PERCENT --force"

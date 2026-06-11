@@ -34,6 +34,7 @@ class SeqAnalyzer:
         self.benchmark_indices = None
         self.nearest_indices = None
         self.distances = None
+        self.has_benchmark = benchmark_contigs_file is not None
 
     def _load_contig_lengths(self, length_file):
         """Load contig length file - for TPM calculation"""
@@ -105,7 +106,8 @@ class SeqAnalyzer:
 
     def calculate_total_mapped_reads(self, bam_file):
         """Calculate total mapped reads in BAM file"""
-        cmd = f"samtools flagstat {bam_file} | grep 'mapped (' | head -1 | cut -d' ' -f1"
+        threads = max(1, (os.cpu_count() or 1) - 2)
+        cmd = f"samtools flagstat {bam_file} --threads {threads} | grep 'mapped (' | head -1 | cut -d' ' -f1"
         try:
             result = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True)
             total_reads = int(result.stdout.strip())
@@ -130,7 +132,8 @@ class SeqAnalyzer:
 
         # Use samtools idxstats to get read count for each contig
         print("  Calculating read counts using samtools idxstats...")
-        cmd_idxstats = f"samtools idxstats {bam_file}"
+        threads = max(1, (os.cpu_count() or 1) - 2)
+        cmd_idxstats = f"samtools idxstats {bam_file} --threads {threads}"
 
         read_count_dict = {}
         try:
@@ -222,7 +225,7 @@ class SeqAnalyzer:
         self.zero_flags = np.array(zero_flags)
 
         # Calculate fold change: positive/negative
-        pseudo_count = 0.1
+        pseudo_count = 0.0001
         fc_data = []
 
         for i in range(len(all_contigs)):
@@ -257,11 +260,11 @@ class SeqAnalyzer:
                 self.benchmark_indices.append(i)
                 benchmark_found.append(contig)
 
-        print(f"Found {len(self.benchmark_indices)}/{len(self.benchmark_contigs)} benchmark contigs in data")
-
         if len(self.benchmark_indices) == 0:
-            print("Error: No benchmark contigs found in data")
+            print("Warning: No benchmark contigs found in data, skipping distance calculation")
             return None
+
+        print(f"Found {len(self.benchmark_indices)}/{len(self.benchmark_contigs)} benchmark contigs in data")
 
         # Calculate features: log(total TPM) and log FC
         total_tpm = np.sum(self.tpm_data, axis=1)
@@ -287,7 +290,7 @@ class SeqAnalyzer:
 
     def select_nearest_contigs(self):
         """Select top_percent% contigs with smallest distances (excluding benchmark contigs)"""
-        if self.distances is None:
+        if self.distances is None or self.benchmark_indices is None:
             print("Error: Please run calculate_benchmark_distances() first")
             return None
 
@@ -304,14 +307,15 @@ class SeqAnalyzer:
         nearest_indices_in_subset = np.argsort(non_benchmark_distances)[:n_select]
         self.nearest_indices = non_benchmark_indices[nearest_indices_in_subset]
 
-        print(f"Selected {n_select} nearest contigs from {len(non_benchmark_distances)} non-benchmark contigs ({self.nearest_percent}%)")
+        print(
+            f"Selected {n_select} nearest contigs from {len(non_benchmark_distances)} non-benchmark contigs ({self.nearest_percent}%)")
         print(
             f"Nearest contigs distance range: {np.min(self.distances[self.nearest_indices]):.4f} - {np.max(self.distances[self.nearest_indices]):.4f}")
 
         return self.nearest_indices
 
-    def create_enhanced_visualization(self, output_prefix):
-        """Create enhanced visualization, retaining only feature space and distance visualization"""
+    def create_visualization_without_benchmark(self, output_prefix):
+        """Create visualization without benchmark data"""
         font_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "times.ttf")
         if os.path.exists(font_path):
             font_manager.fontManager.addfont(font_path)
@@ -326,50 +330,111 @@ class SeqAnalyzer:
         log_total_tpm = np.log10(total_tpm + 1)
         log2_fc = self.fold_changes
 
-        # Create figure - retain only one subplot
+        # Create figure
         fig, ax = plt.subplots(1, 1, figsize=(8, 6))
 
-        if self.distances is not None:
-            # Regular contigs
-            scatter = ax.scatter(
-                log_total_tpm, log2_fc,
-                c=self.distances, cmap='viridis', alpha=0.6, s=30
+        # Color by fold change direction
+        colors = np.where(log2_fc > 0, 'red', 'blue')  # Red for up-regulated, blue for down-regulated
+        sizes = 30 + 70 * (log_total_tpm - np.min(log_total_tpm)) / (
+                    np.max(log_total_tpm) - np.min(log_total_tpm) + 1e-10)
+
+        scatter = ax.scatter(
+            log_total_tpm, log2_fc,
+            c=colors, alpha=0.6, s=sizes
+        )
+
+        # Add reference lines
+        ax.axhline(y=0, color='black', linestyle='-', linewidth=0.5, alpha=0.5)
+        ax.axhline(y=1, color='red', linestyle='--', linewidth=1, alpha=0.5, label='FC=2 (Up-regulation)')
+        ax.axhline(y=-1, color='blue', linestyle='--', linewidth=1, alpha=0.5, label='FC=0.5 (Down-regulation)')
+
+        # Set axis labels and title
+        ax.set_xlabel('Log10(TPM + 1)', fontsize=16)
+        ax.set_ylabel('Log2(FC)', fontsize=16)
+        ax.set_title('Differential Expression Analysis', fontsize=20)
+
+        # Add legend
+        from matplotlib.patches import Patch
+        legend_elements = [
+            Patch(facecolor='red', alpha=0.6, label='Up-regulated (FC > 1)'),
+            Patch(facecolor='blue', alpha=0.6, label='Down-regulated (FC < -1)')
+        ]
+        ax.legend(handles=legend_elements, loc='upper right')
+
+        ax.grid(True, alpha=0.3)
+
+        # Add text box with statistics
+        up_count = np.sum(log2_fc > 1)
+        down_count = np.sum(log2_fc < -1)
+        textstr = f'Total: {len(log2_fc)}\nUp: {up_count}\nDown: {down_count}'
+        props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
+        ax.text(0.05, 0.95, textstr, transform=ax.transAxes, fontsize=12,
+                verticalalignment='top', bbox=props)
+
+        plt.tight_layout()
+        plt.savefig(f"{output_prefix}_feature_space.svg", bbox_inches='tight')
+        plt.show()
+
+    def create_visualization_with_benchmark(self, output_prefix):
+        """Create visualization with benchmark data"""
+        font_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "times.ttf")
+        if os.path.exists(font_path):
+            font_manager.fontManager.addfont(font_path)
+            # Set global font to Times New Roman
+            plt.rcParams['font.family'] = 'serif'
+            plt.rcParams['font.serif'] = ['Times New Roman']
+            plt.rcParams['mathtext.fontset'] = 'stix'
+        plt.rcParams['font.size'] = 14
+
+        # Prepare data
+        total_tpm = np.sum(self.tpm_data, axis=1)
+        log_total_tpm = np.log10(total_tpm + 1)
+        log2_fc = self.fold_changes
+
+        # Create figure
+        fig, ax = plt.subplots(1, 1, figsize=(8, 6))
+
+        # Regular contigs with distance coloring
+        scatter = ax.scatter(
+            log_total_tpm, log2_fc,
+            c=self.distances, cmap='viridis', alpha=0.6, s=30
+        )
+
+        # Mark benchmark contigs
+        if self.benchmark_indices is not None:
+            ax.scatter(
+                log_total_tpm[self.benchmark_indices], log2_fc[self.benchmark_indices],
+                c='red', alpha=0.8, s=80, marker='*', label='Benchmark contigs'
             )
 
-            # Mark benchmark contigs
-            if self.benchmark_indices is not None:
-                ax.scatter(
-                    log_total_tpm[self.benchmark_indices], log2_fc[self.benchmark_indices],
-                    c='red', alpha=0.6, s=80, marker='*', label='Benchmark contigs'
-                )
+        # Mark nearest contigs
+        if self.nearest_indices is not None:
+            ax.scatter(
+                log_total_tpm[self.nearest_indices], log2_fc[self.nearest_indices],
+                c='orange', alpha=0.8, s=40, marker='^', label=f'Nearest {self.nearest_percent}% contigs'
+            )
 
-            # Mark nearest contigs
-            if self.nearest_indices is not None:
-                ax.scatter(
-                    log_total_tpm[self.nearest_indices], log2_fc[self.nearest_indices],
-                    c='orange', alpha=0.8, s=30, marker='^', label=f'Nearest {self.nearest_percent}% contigs'
-                )
-
-            # Mark benchmark center
+        # Mark benchmark center
+        if self.benchmark_indices is not None and len(self.benchmark_indices) > 0:
             benchmark_center_log_tpm = np.mean(log_total_tpm[self.benchmark_indices])
             benchmark_center_log_fc = np.mean(log2_fc[self.benchmark_indices])
             ax.scatter(
                 [benchmark_center_log_tpm], [benchmark_center_log_fc],
-                c='black', alpha=0.6, s=80, marker='X', label='Benchmark center'
+                c='black', alpha=0.8, s=100, marker='X', label='Benchmark center'
             )
 
-            # Set color bar and labels
-            cbar = plt.colorbar(scatter, ax=ax)
-            cbar.set_label('Distance to benchmark center', fontsize=16)
+        # Set color bar and labels
+        cbar = plt.colorbar(scatter, ax=ax)
+        cbar.set_label('Distance to benchmark center', fontsize=16)
 
-            # Set axis labels and title
-            ax.set_xlabel('Log10(TPM + 1)', fontsize=16)
-            ax.set_ylabel('Log2(FC)', fontsize=16)
-            ax.set_title('', fontsize=20)
+        # Set axis labels and title
+        ax.set_xlabel('Log10(TPM + 1)', fontsize=16)
+        ax.set_ylabel('Log2(FC)', fontsize=16)
+        ax.set_title('Feature Space with Benchmark Distances', fontsize=20)
 
-            # Set legend
-            legend = ax.legend()
-            ax.grid(True, alpha=0.3)
+        # Set legend
+        ax.legend()
+        ax.grid(True, alpha=0.3)
 
         plt.tight_layout()
         plt.savefig(f"{output_prefix}_feature_space.svg", bbox_inches='tight')
@@ -426,9 +491,6 @@ class SeqAnalyzer:
                 # Create a Series mapping contig -> distance
                 dist_series = pd.Series(self.distances, index=self.contig_names)
 
-                # Create a Series mapping contig -> distance
-                dist_series = pd.Series(self.distances, index=self.contig_names)
-
                 # Map distances to df by contig name (regardless of df sorting)
                 df['distance_to_benchmark'] = df['contig'].map(dist_series)
 
@@ -470,8 +532,16 @@ class SeqAnalyzer:
                     benchmark_df = df[df['contig'].isin(benchmark_contigs)].copy()
                     benchmark_df.to_csv(f"{output_prefix}_benchmark_contigs.csv", index=False)
 
-        # Create enhanced visualization
-        self.create_enhanced_visualization(output_prefix)
+                # Create visualization with benchmark
+                self.create_visualization_with_benchmark(output_prefix)
+            else:
+                print("\nNo valid benchmark contigs found in data, creating basic visualization")
+                # Create visualization without benchmark
+                self.create_visualization_without_benchmark(output_prefix)
+        else:
+            print("\nNo benchmark file provided, creating basic visualization")
+            # Create visualization without benchmark
+            self.create_visualization_without_benchmark(output_prefix)
 
         print(f"\nseq Analysis Complete!")
         print(f"Total contigs: {len(df)}")
@@ -496,11 +566,11 @@ def main():
     parser.add_argument('--positive_bam', help='Positive sample BAM file')
     parser.add_argument('--negative_bam', help='Negative sample BAM file')
     parser.add_argument('--contig_lengths', required=True, help='Contig length file (required)')
-    parser.add_argument('--benchmark_contigs', required=True, help='Benchmark contigs file')
+    parser.add_argument('--benchmark_contigs', help='Benchmark contigs file (optional)')
     parser.add_argument('--existing_results', help='Existing results file (if provided, skip BAM processing)')
     parser.add_argument('--output', required=True, help='Output file prefix')
     parser.add_argument('--nearest_percent', type=float, default=0.1,
-                       help='Percentage of nearest contigs to select (default: 0.1)')
+                        help='Percentage of nearest contigs to select (default: 0.1, only used with benchmark)')
 
     args = parser.parse_args()
 

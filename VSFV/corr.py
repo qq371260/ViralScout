@@ -42,7 +42,7 @@ def parse_arguments():
                         help='P-value threshold')
     parser.add_argument('-o', '--output', type=str, default='',
                         help='Output file prefix (default: use vector mode as prefix)')
-    parser.add_argument('-t', '--threads', type=int, default=-1,
+    parser.add_argument('-t', '--threads', type=int, default=max(1, (os.cpu_count() or 1) - 1),
                         help='Number of parallel threads (default to use all CPU cores)')
     parser.add_argument('--min_length', type=int, default=18,
                         help='Minimum sRNA size for dimension calculation')
@@ -252,8 +252,8 @@ def process_strand_data(df, valid_target_rows, numeric_cols, corr_method, args):
                 if strand in df_processed.index and selected_benchmarks:  # Ensure we have reference
                     try:
                         # Calculate correlation with first benchmark
-                        first_bench_vector = df_processed.loc[selected_benchmarks[0], numeric_cols].values.astype(float)
-                        strand_vector = df_processed.loc[strand, numeric_cols].values.astype(float)
+                        first_bench_vector = df_processed.loc[selected_benchmarks[0], numeric_cols].values.astype(float).flatten()
+                        strand_vector = df_processed.loc[strand, numeric_cols].values.astype(float).flatten()
 
                         valid_mask = ~(np.isnan(first_bench_vector) | np.isnan(strand_vector))
                         first_valid = first_bench_vector[valid_mask]
@@ -325,13 +325,13 @@ def process_strand_data(df, valid_target_rows, numeric_cols, corr_method, args):
                 for strand in strands:
                     if strand in df_processed.index:
                         try:
-                            strand_vector = df_processed.loc[strand, numeric_cols].values.astype(float)
+                            strand_vector = df_processed.loc[strand, numeric_cols].values.astype(float).flatten()
                             total_corr = 0.0
                             valid_count = 0
 
                             for benchmark in selected_benchmarks:
                                 if benchmark in df_processed.index:
-                                    bench_vector = df_processed.loc[benchmark, numeric_cols].values.astype(float)
+                                    bench_vector = df_processed.loc[benchmark, numeric_cols].values.astype(float).flatten()
 
                                     valid_mask = ~(np.isnan(strand_vector) | np.isnan(bench_vector))
                                     strand_valid = strand_vector[valid_mask]
@@ -448,13 +448,13 @@ def main():
         print(
             f"Feature description: {length_count}-dimensional length distribution ({args.min_length}-{args.max_length}nt)")
     elif vector_mode == 'size_P_5nt':
-        print(f"Feature description: {length_count + 4}-dimensional (length distribution + A/T/C/G base composition)")
+        print(f"Feature description: {length_count + 4}-dimensional (length distribution + A/U/C/G base composition)")
     elif vector_mode == 'sizeXstr':
         print(f"Feature description: {length_count * 2}-dimensional (length × strand specificity)")
     elif vector_mode == 'sizeX5nt':
-        print(f"Feature description: {length_count * 4}-dimensional (length × A/T/C/G base specificity)")
+        print(f"Feature description: {length_count * 4}-dimensional (length × A/U/C/G base specificity)")
     elif vector_mode == 'sizeX5ntXstr':
-        print(f"Feature description: {length_count * 8}-dimensional (length × A/T/C/G × strand specificity)")
+        print(f"Feature description: {length_count * 8}-dimensional (length × A/U/C/G × strand specificity)")
 
     # Initialize analysis variables
     strand_specific_mode = vector_mode in ['sizeXstr', 'sizeX5ntXstr']
@@ -477,8 +477,8 @@ def main():
     def calculate_correlation_and_pvalue(target_row, other_row, df, numeric_cols, corr_method):
         """Calculate correlation coefficient and p-value between two rows"""
         try:
-            y = df.loc[target_row, numeric_cols].values.astype(float)
-            x = df.loc[other_row, numeric_cols].values.astype(float)
+            y = df.loc[target_row, numeric_cols].values.astype(float).flatten()
+            x = df.loc[other_row, numeric_cols].values.astype(float).flatten()
 
             valid_mask = ~(np.isnan(x) | np.isnan(y))
             x_valid = x[valid_mask]
@@ -682,6 +682,18 @@ def main():
     normalized_data_named = normalized_data.copy()
     normalized_data_named.index = available_names
 
+    vector_mode = detect_vector_mode(numeric_cols, args.min_length, args.max_length)
+    if vector_mode in ["size", "size_P_5nt"]:
+        vmax_value = 0.5
+    elif vector_mode == "sizeXstr":
+        vmax_value = 0.3
+    elif vector_mode == "sizeX5nt":
+        vmax_value = 0.2
+    elif vector_mode == "sizeX5ntXstr":
+        vmax_value = 0.1
+    else:
+        vmax_value = 0.5
+
     # Plot clustered heatmap
     g = sns.clustermap(
         normalized_data_named,  # Use named version for visualization
@@ -689,7 +701,7 @@ def main():
         col_cluster=False,  # Disable column clustering (keep original order)
         cmap=cmap_custom,  # Custom color map for heatmap visualization
         vmin=0,  # Minimum value for color scale
-        vmax=0.1,  # Maximum value for color scale
+        vmax=vmax_value,  # Maximum value for color scale
         figsize=(fig_size_width, fig_size_height),  # Dynamic figure dimensions
         dendrogram_ratio=0.2,  # Proportion of figure dedicated to dendrogram
         cbar_pos=(0.02, 0.8, 0.03, 0.15),  # Color bar position (left, bottom, width, height)
@@ -699,7 +711,7 @@ def main():
     )
 
     # Calculate dynamic font sizes
-    def calculate_optimal_fontsize(n_items, max_font=10, min_font=4):
+    def calculate_optimal_fontsize(n_items, max_font=14, min_font=4):
         """Calculate optimal font size based on number of items"""
         import math
         if n_items <= 10:
@@ -708,7 +720,7 @@ def main():
             return max_font - (n_items - 10) * 0.1
         else:
             # For large datasets, use logarithmic scaling
-            return max(min_font, max_font - math.log(n_items) * 1.5)
+            return max(min_font, max_font - math.log(n_items) * 2)
 
     y_fontsize = calculate_optimal_fontsize(len(available_indices))
     x_fontsize = calculate_optimal_fontsize(len(numeric_cols))
@@ -734,7 +746,7 @@ def main():
         # Set ticks at the center of each column (0.5, 1.5, 2.5, ...)
         x_ticks = [i + 0.5 for i in range(len(numeric_cols))]
         g.ax_heatmap.set_xticks(x_ticks)
-        g.ax_heatmap.set_xticklabels(numeric_cols, fontsize=x_fontsize, rotation=60, ha='center')
+        g.ax_heatmap.set_xticklabels(numeric_cols, fontsize=x_fontsize, rotation=90, ha='center')
 
     # Get clustering order and draw enclosing rectangles for FINAL target rows
     reordered_indices = g.dendrogram_row.reordered_ind
@@ -763,7 +775,6 @@ def main():
     plt.tight_layout()
     heatmap_filename = f"{output_prefix}_{args.correlation_method}_clustering_heatmap.svg"
     plt.savefig(heatmap_filename, bbox_inches="tight", dpi=300)
-    plt.show()
     print(f"Heatmap saved as: {heatmap_filename}")
 
     # Save results
@@ -837,14 +848,14 @@ def main():
                     f"Feature description: {length_count}-dimensional length distribution ({args.min_length}-{args.max_length}nt)\n")
             elif vector_mode == 'size_P_5nt':
                 f.write(
-                    f"Feature description: {length_count + 4}-dimensional (length distribution + A/T/C/G base composition)\n")
+                    f"Feature description: {length_count + 4}-dimensional (length distribution + A/U/C/G base composition)\n")
             elif vector_mode == 'sizeXstr':
                 f.write(f"Feature description: {length_count * 2}-dimensional (length × strand specificity)\n")
             elif vector_mode == 'sizeX5nt':
-                f.write(f"Feature description: {length_count * 4}-dimensional (length × A/T/C/G base specificity)\n")
+                f.write(f"Feature description: {length_count * 4}-dimensional (length × A/U/C/G base specificity)\n")
             elif vector_mode == 'sizeX5ntXstr':
                 f.write(
-                    f"Feature description: {length_count * 8}-dimensional (length × A/T/C/G × strand specificity)\n")
+                    f"Feature description: {length_count * 8}-dimensional (length × A/U/C/G × strand specificity)\n")
 
             f.write(f"Contigs after threshold filtering: {len(filtered_rows)}\n")
             f.write(f"Non-benchmark contigs for output: {len(filtered_output)}\n")
